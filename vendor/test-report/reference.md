@@ -175,7 +175,6 @@ Markup is built in `renderReport` (html.js). Look and behaviour live in `assets/
 3. KPIs: Total cases, Passed, Failed, Blocked (click to filter), Pass rate (passed / run), Bugs (with count logged to Asana).
 4. Charts: Test Execution Results (donut), Defects by Priority (bars P0–P3), Bugs by Module (Function / UI bars, display only — no click filter), Bugs by Severity (donut). All except Bugs by Module are clickable to filter.
 5. Test case table: scrolls in its own box; a row opens its step list; Mở tất cả / Thu gọn.
-6. High-Priority Issues: table of High / Very High bugs (toggle to show all) with Asana status and owner; a row jumps to the bug card.
-7. Bug Details: cards with type, severity, priority, Copy bug, Log Asana; Chọn bug đang hiện (selection for Asana happens only here), Mở tất cả, CSV export of the bugs shown.
+6. Bug Details: cards with type, severity, priority, Copy bug, Log Asana; Chọn bug đang hiện (selection for Asana happens only here), Mở tất cả, CSV export of the bugs shown.
 
 Rows need `data-t`, `data-tc`, `data-suite`, `data-status`, `data-sec`; bug cards need `data-bug` (JSON with `id`, `title`, `short`, `actual`, `expected`), `data-type`, `data-priority`, `data-severity`, `data-screen`, `data-tests`. `dashboard.js` reads only these.

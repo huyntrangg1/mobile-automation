@@ -1,4 +1,4 @@
-// Dashboard, bộ lọc chung, biểu đồ, bảng High-Priority, CSV, sáng / tối — đọc dữ liệu từ DOM của report.
+// Dashboard, bộ lọc chung, biểu đồ, CSV, sáng / tối — đọc dữ liệu từ DOM của report.
 // ===== IK Fitness QA — dashboard, bộ lọc chung, biểu đồ, bảng ưu tiên =====
 (function(){
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
@@ -8,7 +8,6 @@ const ST=[['passed','Passed','var(--pass)'],['failed','Failed','var(--fail)'],['
 const PR=[['Very High','P0','var(--sev-critical)'],['High','P1','var(--sev-major)'],['Normal','P2','var(--sev-minor)'],['Low','P3','var(--sev-trivial)']];
 const SV=[['Critical','var(--sev-critical)'],['Major','var(--sev-major)'],['Minor','var(--sev-minor)'],['Trivial','var(--sev-trivial)']];
 const TY=[['Function','var(--chart-1)'],['UI','var(--chart-4)']];
-const RANKP={'Very High':0,High:1,Normal:2,Low:3},RANKS={Critical:0,Major:1,Minor:2,Trivial:3};
 
 // ---- Data model đọc từ DOM (giữ nguyên file report gốc) ----
 const tests=$$('.table>details.row').map(el=>({el,id:el.dataset.t,tc:el.dataset.tc,suite:el.dataset.suite,status:el.dataset.status,sec:+el.dataset.sec||0,
@@ -105,23 +104,14 @@ function render(){
   const BS=compute('severity').B,svc=cnt(BS,b=>b.severity);
   $('#c-sev').innerHTML=donut(SV.map(([v,c])=>({val:v,l:v,c,v:svc[v]||0})),BS.length,'BUGS','severity');
 
-  // Bảng High-Priority Issues
-  const only=$('#hp-only').checked,HP=B.filter(b=>!only||RANKP[b.priority]<=1).sort((a,b)=>RANKP[a.priority]-RANKP[b.priority]||RANKS[a.severity]-RANKS[b.severity]||a.id.localeCompare(b.id));
-  $('#hp-n').textContent=HP.length+' bug';
-  $('#hp-body').innerHTML=HP.length?HP.map(b=>{const u=logged(b);return `<tr data-goto-bug="${esc(b.id)}" tabindex="0"><td class="mono">${esc(b.id)}</td><td class="ttl" title="${esc(b.title)}">${esc(b.short)}</td><td>${esc(b.module)}</td><td><span class="type type-${esc(b.type)}">${esc(b.type)}</span></td><td><span class="sev sev-${esc(b.severity)}"><span class="sev-bars"><i></i><i></i><i></i><i></i></span>${esc(b.severity)}</span></td><td><span class="prio prio-${b.priority.replace(' ','')}"><b>${PR.find(p=>p[0]===b.priority)?.[1]||''}</b>${esc(b.priority)}</span></td><td>${u?`<a class="logged" href="${esc(u)}" target="_blank" rel="noopener">✓ Đã log ↗</a>`:'<span class="badge st-fail">Open</span>'}</td><td>${esc(owner(b)||'—')}</td></tr>`}).join(''):`<tr><td colspan="8" class="muted" style="text-align:center;padding:24px;cursor:default">Không có bug ${only?'High / Very High ':''}nào khớp bộ lọc.</td></tr>`;
 }
 window.onBugLogged=()=>render();
-$('#hp-only').onchange=render;
 
 // Bấm biểu đồ / KPI / legend → lọc (bấm lại để bỏ lọc)
 document.addEventListener('click',e=>{
   const r=e.target.closest('[data-reset]');if(r){setF('status','');return}
   const x=e.target.closest('[data-k][data-v]');if(x&&!x.closest('.modal')){setF(x.dataset.k,x.dataset.v,true);return}
-  const g=e.target.closest('tr[data-goto-bug]');if(g&&!e.target.closest('a'))openBug(g.dataset.gotoBug);
 });
-document.addEventListener('keydown',e=>{const g=e.target.closest&&e.target.closest('tr[data-goto-bug]');if(g&&e.key==='Enter')openBug(g.dataset.gotoBug)});
-function openBug(id){const c=document.getElementById('bug-'+id);if(!c)return;if(c.style.display==='none')resetFilters();c.open=true;
-  c.scrollIntoView({behavior:'smooth',block:'start'});c.classList.add('flash');setTimeout(()=>c.classList.remove('flash'),1600)}
 
 // Mở / thu gọn
 $('#tc-expand').onclick=()=>tests.forEach(t=>{if(t.el.style.display!=='none')t.el.open=true});

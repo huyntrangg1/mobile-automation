@@ -403,12 +403,6 @@ ${ui('report.css')}
     </div>
   </section>
 
-  <section>
-    <div class="sec-head"><h2>High-Priority Issues / Action Items</h2><span class="hint" id="hp-n"></span><span class="sp"></span>
-      <label class="sec-tools hint" style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" id="hp-only" checked style="accent-color:var(--ink)">Chỉ High / Very High</label></div>
-    <div class="card"><div class="tbl-wrap"><table class="dt"><thead><tr><th>Bug ID</th><th>Tiêu đề</th><th>Module</th><th>Loại</th><th>Severity</th><th>Priority</th><th>Status</th><th>Owner</th></tr></thead><tbody id="hp-body"></tbody></table></div></div>
-  </section>
-
   <section class="buglist" id="bugs">
     <div class="sec-head"><h2>Bug Details</h2><span class="hint" id="bf-n"></span><span class="sp"></span>
       <span class="sec-tools" style="display:inline-flex;gap:8px;flex-wrap:wrap">${share ? '' : '<button type="button" class="btn btn-sm" id="pick-all">Chọn bug đang hiện</button>'}<button type="button" class="btn btn-sm" id="bug-expand">Mở tất cả</button><button type="button" class="btn btn-sm" id="bug-csv">${ICON.download}CSV</button></span></div>
