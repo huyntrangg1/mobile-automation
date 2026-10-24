@@ -55,6 +55,10 @@ export function RunView({ lock }) {
         {!running && badN > 0 && <button className="btn" type="button" disabled={busy || !!lock} title={lock ? `Thiết bị đang bận: ${lock.label}` : ''} onClick={() => rerun(true)}><Icon name="refresh" />Run lại case lỗi ({badN})</button>}
         {!running && <button className="btn" type="button" disabled={busy || !!lock} title={lock ? `Thiết bị đang bận: ${lock.label}` : ''} onClick={() => rerun(false)}><Icon name="play" />Run lại</button>}
         {r.reportUrl && <a className="btn btn-primary" href={r.reportUrl} target="_blank" rel="noreferrer"><Icon name="ext" />Mở report</a>}
+        {!running && <button className="btn btn-ghost btn-danger" type="button" onClick={async () => {
+          if (!window.confirm(`Xoá ${r.id}? Kết quả, log, ảnh và report sẽ bị xoá hẳn.`)) return;
+          try { await api.post('/runs/delete', { ids: [r.id] }); nav('/runs'); } catch (e) { setErr(e); }
+        }}>Xoá run</button>}
       </PageHeader>
       {r.error && <ErrorNote error={r.error} />}
       {running && r.paused && <div className="alert alert-warn" role="status"><Icon name="pause" /><div><b>Đang tạm dừng</b> trước case kế tiếp. App và phiên Appium vẫn giữ nguyên — bấm <b>Tiếp tục</b> để chạy tiếp, hoặc <b>Stop</b> để dừng hẳn.</div></div>}

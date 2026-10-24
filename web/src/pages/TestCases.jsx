@@ -41,6 +41,22 @@ export function TestCases({ apps }) {
     } catch (e) { setErr(e); }
     setBusy(false);
   };
+  // Xoá: xem trước (số case, case "Tiếp nối" bị ảnh hưởng) → hỏi xác nhận → xoá
+  const remove = async (sel, what) => {
+    setErr(null);
+    try {
+      const plan = await api.post(`/apps/${appId}/cases/remove-plan`, sel);
+      if (!plan.ids.length) return;
+      const orphan = plan.orphans.length ? `\n\n⚠ ${plan.orphans.length} case "Tiếp nối" case bị xoá sẽ không chạy được nữa: ${plan.orphans.slice(0, 8).map((o) => o.tcId).join(', ')}${plan.orphans.length > 8 ? '…' : ''}` : '';
+      const files = sel.caseIds ? '' : `\nXoá cả bản copy Excel và file script: ${plan.files.map((f) => `${f}.xlsx`).join(', ')}.`;
+      if (!window.confirm(`Xoá ${what} — ${plan.ids.length} case?${files}\nLịch sử run cũ vẫn giữ. Case xoá lẻ sẽ quay lại nếu import lại đúng file Excel đó.${orphan}`)) return;
+      const r = await api.post(`/apps/${appId}/cases/remove`, sel);
+      setSel({});
+      if (sel.file || sel.all) setFileF('');
+      setMsg(`Đã xoá ${r.removed} case.`);
+      load();
+    } catch (e) { setErr(e); }
+  };
   const generate = async (only) => {
     setErr(null);
     try {
@@ -123,6 +139,9 @@ export function TestCases({ apps }) {
             </div>
             <span style={{ flex: 1 }} />
             <input className="inp search-inp" type="search" placeholder="Tìm theo ID, tiêu đề" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Tìm case" />
+            {fileF
+              ? <button className="btn btn-sm btn-ghost btn-danger" type="button" onClick={() => remove({ file: fileF }, `file ${fileF}.xlsx`)}>Xoá file này</button>
+              : <button className="btn btn-sm btn-ghost btn-danger" type="button" onClick={() => remove({ all: true }, 'tất cả test case của app')}>Xoá tất cả</button>}
           </div>
           <section className={drag ? 'card drop on' : 'card'} style={{ overflow: 'hidden' }}>
             <table className="dt tc-table">
@@ -157,6 +176,7 @@ export function TestCases({ apps }) {
               <b>{picked.length} case đã chọn</b>
               <button className="btn btn-sm" type="button" onClick={() => setSel({})}>Bỏ chọn</button>
               <span className="sp" />
+              <button className="btn btn-sm btn-danger" type="button" onClick={() => remove({ caseIds: picked }, `${picked.length} case đã chọn`)}>Xoá</button>
               <button className="btn btn-sm" type="button" onClick={() => generate()}><Icon name="spark" />Generate script</button>
               <button className="btn btn-sm btn-primary" type="button" onClick={() => nav(`/apps/${appId}/run?cases=${encodeURIComponent(picked.join(','))}`)}><Icon name="play" />Run</button>
             </> : <span className="cap">Tick chọn case trong bảng, rồi bấm <b>Run</b> (case chưa có script thì Generate trước). Case "Sau TC…" chạy kèm các case phía trước.</span>}

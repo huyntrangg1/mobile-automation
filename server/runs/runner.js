@@ -21,9 +21,13 @@ export function rerunCaseIds(run, onlyFailed, tcIds) {
 export function createRunner({ store, lock, emit, dataDir, scriptPath, spawnImpl = spawn, screenshotImpl = deviceScreenshot, shotMs = 1000, pollMs = 1000, killGraceMs = 15000 }) {
   const procs = new Map(); // runId → { proc, stopping }
 
+  // Mã run tăng dần, không dùng lại mã của run đã xoá (giữ số cuối trong store "meta")
+  const seq = () => Math.max(store.get('meta', 'runSeq')?.value || 0, ...store.list('runs').map((r) => Number(r.id.replace(/\D/g, '')) || 0));
+  const nextRunId = () => `RUN-${String(seq() + 1).padStart(4, '0')}`;
   const nextId = () => {
-    const n = Math.max(0, ...store.list('runs').map((r) => Number(r.id.replace(/\D/g, '')) || 0)) + 1;
-    return `RUN-${String(n).padStart(4, '0')}`;
+    const id = nextRunId();
+    store.put('meta', { id: 'runSeq', value: Number(id.replace(/\D/g, '')) });
+    return id;
   };
   const update = (id, patch) => {
     const r = store.patch('runs', id, patch);
@@ -217,5 +221,22 @@ export function createRunner({ store, lock, emit, dataDir, scriptPath, spawnImpl
     setTimeout(() => send('SIGKILL'), killGraceMs * 2);
   }
 
-  return { startRun, stop, pause, resume };
+  // Xoá run (dữ liệu, ảnh, report). ids = danh sách mã, hoặc { olderThanDays } = mọi run bắt đầu trước N ngày
+  async function deleteRuns(ids, { olderThanDays } = {}) {
+    const cutoff = olderThanDays ? Date.now() - olderThanDays * 864e5 : null;
+    const pick = ids ? ids.map((id) => store.get('runs', id)).filter(Boolean) : store.list('runs').filter((r) => cutoff && Date.parse(r.startedAt) < cutoff);
+    const deleted = [];
+    const skipped = [];
+    for (const r of pick) {
+      if (r.status === 'running' || procs.has(r.id)) { skipped.push({ id: r.id, reason: 'Đang chạy — Stop trước khi xoá' }); continue; }
+      store.put('meta', { id: 'runSeq', value: seq() }); // giữ số cao nhất trước khi xoá
+      fs.rmSync(path.join(dataDir, 'runs', r.id), { recursive: true, force: true });
+      store.remove('runs', r.id);
+      deleted.push(r.id);
+    }
+    if (deleted.length) emit('app', {});
+    return { deleted, skipped };
+  }
+
+  return { startRun, stop, pause, resume, deleteRuns, nextRunId };
 }

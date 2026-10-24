@@ -41,6 +41,12 @@ export default function runRoutes({ store, runner, generator }) {
     if (!ids.length) return res.status(400).json({ error: req.body?.tcIds?.length ? 'Không có case nào được chọn thuộc run này' : 'Run này không có case lỗi để chạy lại' });
     await start(old.appId, req.body?.udid || old.udid, ids, res);
   }));
+  // Xoá run: { ids: [...] } hoặc { olderThanDays: 7 }
+  r.post('/runs/delete', wrap(async (req, res) => {
+    const { ids, olderThanDays } = req.body || {};
+    if (!ids?.length && !olderThanDays) return res.status(400).json({ error: 'Chưa chọn run để xoá' });
+    res.json(await runner.deleteRuns(ids?.length ? ids : null, { olderThanDays: Number(olderThanDays) || undefined }));
+  }));
   r.post('/runs/:id/pause', wrap(async (req, res) => {
     try { await runner.pause(req.params.id); res.json({ ok: true }); } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
   }));
