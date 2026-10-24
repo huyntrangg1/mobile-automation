@@ -184,3 +184,6 @@ html,body,#root{height:100%}
 .run-prog{display:inline-flex;align-items:center;gap:6px;margin-right:8px}
 .selbar .btn-danger{color:#ffb184;border-color:#9c4300}
 .selbar .btn-danger:hover{background:#3a2214}
+.run-sim .card-h{gap:8px}
+.run-sim .card-h h2{white-space:nowrap}
+.run-sim .card-h .cap{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}

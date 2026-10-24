@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QA Pipeline Design</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root{
+  --bg:#f5f6f4;--card:#ffffff;--sunk:#eef0ed;--border:#dfe2de;--ink:#15181c;--muted:#545b64;
+  --brand:#c6f432;--on-brand:#15181c;--action:#0062a0;--action-soft:#e8f1f8;
+  --pass:#0072b2;--fail:#d55e00;--blocked:#e69f00;--shadow:0 1px 2px rgba(16,18,22,.06),0 8px 24px rgba(16,18,22,.06);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0f1114;--card:#181b20;--sunk:#20242b;--border:#2c313a;--ink:#eef0f2;--muted:#a3aab4;--action:#7cc4f0;--action-soft:#12283a;--shadow:0 1px 2px rgba(0,0,0,.5);
+}}
+:root[data-theme="dark"]{--bg:#0f1114;--card:#181b20;--sunk:#20242b;--border:#2c313a;--ink:#eef0f2;--muted:#a3aab4;--action:#7cc4f0;--action-soft:#12283a;--shadow:0 1px 2px rgba(0,0,0,.5)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 15px/1.55 "IBM Plex Sans",system-ui,sans-serif}
+.wrap{max-width:1320px;margin:0 auto;padding:40px 24px 80px}
+header.top{display:flex;align-items:center;gap:14px;margin-bottom:8px}
+.logo{width:40px;height:40px;border-radius:11px;background:var(--brand);color:var(--on-brand);display:grid;place-items:center;font-weight:700}
+h1{margin:0;font-size:30px;line-height:1.2;letter-spacing:-.01em}
+.lead{color:var(--muted);max-width:820px;margin:6px 0 28px}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:28px}
+.pill{font-size:12.5px;font-weight:600;padding:4px 10px;border-radius:999px;background:var(--card);border:1px solid var(--border);color:var(--muted)}
+.flow{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px;box-shadow:var(--shadow);margin-bottom:44px}
+.flow svg{width:100%;height:auto;display:block}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:36px}
+nav.toc a{font-size:13px;font-weight:600;color:var(--ink);text-decoration:none;padding:6px 12px;border-radius:8px;background:var(--sunk)}
+nav.toc a:hover{background:var(--action-soft);color:var(--action)}
+section{margin-bottom:56px;scroll-margin-top:16px}
+.sec-h{display:flex;align-items:baseline;gap:12px;margin-bottom:6px}
+.num{font:600 13px/1 "IBM Plex Mono",monospace;color:var(--on-brand);background:var(--brand);padding:6px 8px;border-radius:7px}
+h2{margin:0;font-size:22px}
+.sec-p{color:var(--muted);margin:0 0 18px;max-width:900px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px}
+.grid.one{grid-template-columns:1fr}
+figure{margin:0;background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:var(--shadow)}
+.chrome{display:flex;align-items:center;gap:6px;padding:9px 12px;background:var(--sunk);border-bottom:1px solid var(--border)}
+.chrome i{width:10px;height:10px;border-radius:50%;background:var(--border)}
+.chrome span{margin-left:8px;font:500 12px/1 "IBM Plex Mono",monospace;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+figure img{display:block;width:100%;height:auto;background:#fff}
+figcaption{padding:14px 16px 16px}
+figcaption b{display:block;font-size:15px;margin-bottom:6px}
+figcaption ul{margin:0;padding-left:18px;color:var(--muted);font-size:13.5px}
+figcaption li{margin:3px 0}
+.tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:5px;margin-right:6px;vertical-align:1px}
+.t-ios{background:var(--sunk);color:var(--ink)}.t-and{background:#e2eff8;color:#00598c}
+footer{color:var(--muted);font-size:13px;border-top:1px solid var(--border);padding-top:20px}
+@media (max-width:860px){.grid{grid-template-columns:1fr}h1{font-size:24px}.wrap{padding:24px 16px 60px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top"><div class="logo">✓</div><h1>QA Pipeline: thiết kế tool</h1></header>
+  <p class="lead">Tool web để tester thêm app, lấy locator, import Excel test case, cho AI gen script WebdriverIO, chạy trên iOS Simulator hoặc Android và xem report, không cần viết code. Ảnh dưới đây chụp từ bản demo đang chạy thật, xếp theo luồng sử dụng.</p>
+  <div class="meta"><span class="pill">iOS + Android</span><span class="pill">Design system ikqa · IBM Plex</span><span class="pill">Bản demo ngày 25/10/2026</span><span class="pill">18 màn hình</span></div>
+
+  <div class="flow" aria-label="Luồng sử dụng 7 bước">
+    <svg viewBox="0 0 1260 150" role="img" aria-label="Luồng: Thêm app, Lấy locator, Import Excel, Gen script, Run, Kết quả và report, Lịch sử">
+      <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8c929a"/></marker></defs>
+      <g font-family="IBM Plex Sans, system-ui" text-anchor="middle">
+        <g><rect x="10" y="30" width="150" height="86" rx="12" fill="none" stroke="#8c929a"/><text x="85" y="66" font-size="15" font-weight="600" fill="currentColor">1 · Thêm app</text><text x="85" y="88" font-size="12" fill="#545b64">.app / .apk</text></g>
+        <g><rect x="190" y="30" width="150" height="86" rx="12" fill="none" stroke="#8c929a"/><text x="265" y="66" font-size="15" font-weight="600" fill="currentColor">2 · Lấy locator</text><text x="265" y="88" font-size="12" fill="#545b64">Ghi lại / AI khám phá</text></g>
+        <g><rect x="370" y="30" width="150" height="86" rx="12" fill="none" stroke="#8c929a"/><text x="445" y="66" font-size="15" font-weight="600" fill="currentColor">3 · Import Excel</text><text x="445" y="88" font-size="12" fill="#545b64">format automation v2</text></g>
+        <g><rect x="550" y="30" width="150" height="86" rx="12" fill="none" stroke="#8c929a"/><text x="625" y="66" font-size="15" font-weight="600" fill="currentColor">4 · Gen script</text><text x="625" y="88" font-size="12" fill="#545b64">AI · review tuỳ chọn</text></g>
+        <g><rect x="730" y="30" width="150" height="86" rx="12" fill="#0062a0" fill-opacity=".1" stroke="#0062a0" stroke-width="2"/><text x="805" y="66" font-size="15" font-weight="600" fill="currentColor">5 · Run</text><text x="805" y="88" font-size="12" fill="#545b64">bước + thiết bị trực tiếp</text></g>
+        <g><rect x="910" y="30" width="150" height="86" rx="12" fill="none" stroke="#8c929a"/><text x="985" y="66" font-size="15" font-weight="600" fill="currentColor">6 · Kết quả</text><text x="985" y="88" font-size="12" fill="#545b64">report · chạy lại</text></g>
+        <g><rect x="1090" y="30" width="160" height="86" rx="12" fill="none" stroke="#8c929a"/><text x="1170" y="66" font-size="15" font-weight="600" fill="currentColor">7 · Lịch sử</text><text x="1170" y="88" font-size="12" fill="#545b64">Test Runs · cài đặt</text></g>
+        <g stroke="#8c929a" stroke-width="1.4" fill="none"><path d="M160 73H186" marker-end="url(#ar)"/><path d="M340 73H366" marker-end="url(#ar)"/><path d="M520 73H546" marker-end="url(#ar)"/><path d="M700 73H726" marker-end="url(#ar)"/><path d="M880 73H906" marker-end="url(#ar)"/><path d="M1060 73H1086" marker-end="url(#ar)"/></g>
+      </g>
+    </svg>
+  </div>
+
+  <nav class="toc" aria-label="Mục lục">
+    <a href="#s1">1 · Thêm app</a><a href="#s2">2 · Lấy locator</a><a href="#s3">3 · Test Cases</a><a href="#s4">4 · Scripts</a><a href="#s5">5 · Run</a><a href="#s6">6 · Kết quả</a><a href="#s7">7 · Lịch sử &amp; cài đặt</a>
+  </nav>
+
+  <section id="s1">
+    <div class="sec-h"><span class="num">01</span><h2>Apps và Thêm app</h2></div>
+    <p class="sec-p">Mỗi app có locator map, test case, script và lịch sử run riêng. Thanh bên luôn hiện thiết bị đang rảnh hay đang chạy job.</p>
+    <div class="grid">
+      <figure><div class="chrome"><i></i><i></i><i></i><span>/apps</span></div><img src="img/01-apps.jpg" alt="Màn Apps" loading="lazy"><figcaption><b>Danh sách app</b><ul><li>Card mỗi app: nhãn iOS / Android, bundle id, version, trạng thái chuẩn bị.</li><li>3 ô tiến độ Locator → Test case → Run gần nhất, bấm để đi tới bước đó.</li></ul></figcaption></figure>
+      <figure><div class="chrome"><i></i><i></i><i></i><span>/apps · drawer Thêm app</span></div><img src="img/02-add-app.jpg" alt="Drawer Thêm app" loading="lazy"><figcaption><b>Thêm app</b><ul><li>File <code>.app</code> (iOS Simulator) hoặc <code>.apk</code> (Android): tool tự nhận nền tảng, đọc bundle id / package, version.</li><li>Helper pack (code viết tay riêng của app) chỉ hiện pack cùng nền tảng.</li><li>Tạo xong: tool dựng project WebdriverIO riêng + cài report chung.</li></ul></figcaption></figure>
+    </div>
+  </section>
+
+  <section id="s2">
+    <div class="sec-h"><span class="num">02</span><h2>Lấy locator</h2></div>
+    <p class="sec-p">Hai chế độ đổ vào cùng một locator map. Tool tự nhận lại màn đã có, không tạo màn trùng, và tự xử lý popup hệ thống của iOS / Android.</p>
+    <div class="grid">
+      <figure><div class="chrome"><i></i><i></i><i></i><span>Locator map · drawer Lấy locator</span></div><img src="img/04-start-capture.jpg" alt="Chọn chế độ lấy locator" loading="lazy"><figcaption><b>Chọn chế độ</b><ul><li><b style="display:inline;margin:0">Tự khám phá:</b> AI tự bấm qua app; cho trước email / mật khẩu test, số bước tối đa.</li><li><b style="display:inline;margin:0">Ghi lại khi tôi bấm:</b> tester bấm trên Simulator / emulator, tool ghi từng màn.</li></ul></figcaption></figure>
+      <figure><div class="chrome"><i></i><i></i><i></i><span>/apps/ik-fitness/capture/…</span></div><img src="img/05-capture-record.jpg" alt="Đang ghi locator" loading="lazy"><figcaption><b><span class="tag t-ios">iOS</span>Đang ghi lại</b><ul><li>Ảnh thiết bị trực tiếp, số màn đã ghi, màn hiện tại, nhật ký.</li><li>Popup hệ thống che màn hình → nhắc tester đóng.</li></ul></figcaption></figure>
+      <figure><div class="chrome"><i></i><i></i><i></i><span>/apps/api-demos-android-mau/capture/…</span></div><img src="img/06-capture-android.jpg" alt="Lấy locator Android" loading="lazy"><figcaption><b><span class="tag t-and">Android</span>Lấy locator trên emulator</b><ul><li>Locator Android: <code>~content-desc</code> → <code>resourceId</code> → chữ hiển thị.</li><li>Hộp xin quyền Android: tự bấm "Don't allow" khi AI khám phá.</li></ul></figcaption></figure>
+      <figure><div class="chrome"><i></i><i></i><i></i><span>/apps/ik-fitness/locators</span></div><img src="img/03-locator-map.jpg" alt="Locator map" loading="lazy"><figcaption><b>Locator map</b><ul><li>Danh sách màn + ảnh; rê chuột lên dòng → khoanh phần tử trên ảnh.</li><li>Đổi tên màn cho khớp cột Screen trong Excel, gộp / xoá màn, đặt "Target trong Excel".</li><li>Tên cũ giữ làm alias để script đã gen không vỡ.</li></ul></figcaption></figure>
+    </div>
+  </section>
+
+  <section id="s3">
+    <div class="sec-h"><span class="num">03</span><h2>Test Cases</h2></div>
+    <p class="sec-p">Import Excel format automation v2, lọc theo file / trạng thái script, chọn case để Generate hoặc Run.</p>
+    <div class="grid one">
+      <figure><div class="chrome"><i></i><i></i><i></i><span>/apps/ik-fitness/cases?file=authentication-automation</span></div><img src="img/07-test-cases.jpg" alt="Màn Test Cases" loading="lazy"><figcaption><b>Danh sách test case</b><ul><li>Dropdown lọc theo file Excel, chip lọc trạng thái (Chưa gen, Đã gen, Gen lỗi, Cần gen lại, Có cảnh báo), ô tìm.</li><li>Nhóm theo module; cột Bắt đầu cho biết "Cài lại app" hay "Sau TC_x" (chuỗi Tiếp nối).</li><li>Nút Import Excel (kéo thả), Gen tất cả chưa có script, Generate (n), Run (n); xoá case / file / tất cả có xem trước.</li></ul></figcaption></figure>
+    </div>
+  </section>
+
+  <section id="s4">
+    <div class="sec-h"><span class="num">04</span><h2>Scripts (review tuỳ chọn)</h2></div>
+    <p class="sec-p">Một file Excel là một file <code>.e2e.js</code>; mỗi case một đoạn code do AI viết. Review không bắt buộc để chạy.</p>
+    <div class="grid one">
+      <figure><div class="chrome"><i></i><i></i><i></i><span>/apps/ik-fitness/scripts?file=authentication-automation&amp;case=TC_CRE_004</span></div><img src="img/08-scripts.jpg" alt="Màn Scripts" loading="lazy"><figcaption><b>Xem / sửa code</b><ul><li>Trái: danh sách case + số cảnh báo. Giữa: editor tự cuộn tới đoạn của case. Phải: các bước trong Excel.</li><li>Cảnh báo khi gen (thiếu locator, chỗ AI tự đoán) hiện trên code; Gen lại, Đánh dấu đã review.</li><li>Lưu tay có kiểm cú pháp; file vừa đổi trên server thì không ghi đè phần đang sửa.</li></ul></figcaption></figure>
+    </div>
+  </section>
+
+  <section id="s5">
+    <div class="sec-h"><span class="num">05</span><h2>Run</h2></div>
+    <p class="sec-p">Kiểm tra trước khi chạy, rồi theo dõi trực tiếp: bước đang chạy cạnh màn hình thiết bị; Tạm dừng không cắt giữa case.</p>
+    <div class="grid">
+      <figure><div class="chrome"><i></i><i></i><i></i><span>Test Cases · drawer Run config</span></div><img src="img/09-run-config.jpg" alt="Run config" loading="lazy"><figcaption><b>Run config</b><ul><li>Chọn thiết bị theo nền tảng app (simulator / emulator đang bật lên đầu).</li><li>Case "Tiếp nối" tự kéo theo case phía trước; case chưa có script liệt kê kèm nút gen ngay.</li><li>Case có cảnh báo: liệt kê từng case + link Xem.</li></ul></figcaption></figure>
+      <figure><div class="chrome"><i></i><i></i><i></i><span>/runs/RUN-0014 · đang chạy</span></div><img src="img/live-RUN-0014-10.jpg" alt="Run đang chạy iOS" loading="lazy"><figcaption><b><span class="tag t-ios">iOS</span>Đang chạy</b><ul><li>Bước đang chạy: ✓ xong · ● đang chạy · ✕ lệch (giá trị thật / mong đợi) · ○ chưa tới.</li><li>Màn hình Simulator làm mới mỗi giây; Log ở tab riêng.</li></ul></figcaption></figure>
+      <figure><div class="chrome"><i></i><i></i><i></i><span>/runs/RUN-0022 · đang chạy</span></div><img src="img/live-RUN-0022-5.jpg" alt="Run đang chạy Android" loading="lazy"><figcaption><b><span class="tag t-and">Android</span>Đang chạy trên emulator</b><ul><li>Cùng giao diện; ảnh thiết bị lấy qua adb.</li></ul></figcaption></figure>
+      <figure><div class="chrome"><i></i><i></i><i></i><span>/runs/RUN-0016 · tạm dừng</span></div><img src="img/paused.jpg" alt="Run tạm dừng" loading="lazy"><figcaption><b>Tạm dừng / Tiếp tục / Stop</b><ul><li>Tạm dừng chờ case hiện tại xong, giữ phiên Appium và trạng thái app.</li><li>Stop hỏi xác nhận; dùng được cả khi đang tạm dừng.</li></ul></figcaption></figure>
+    </div>
+  </section>
+
+  <section id="s6">
+    <div class="sec-h"><span class="num">06</span><h2>Kết quả và report</h2></div>
+    <p class="sec-p">Kết quả từng case, lý do Blocked / Failed ngay trong bảng, chạy lại case chọn riêng, report chung của team nhúng sẵn.</p>
+    <div class="grid">
+      <figure><div class="chrome"><i></i><i></i><i></i><span>/runs/RUN-0014 · đã xong</span></div><img src="img/11-run-done.jpg" alt="Run đã xong" loading="lazy"><figcaption><b>Run đã xong</b><ul><li>Thống kê Passed / Failed / Blocked, pass rate, thanh tiến độ.</li><li>Bấm một dòng: xem lại từng bước, case Blocked hiện ⊘ đúng ở bước bị dừng.</li><li>Run lại · Run lại case lỗi · Mở report · Xoá run.</li></ul></figcaption></figure>
+      <figure><div class="chrome"><i></i><i></i><i></i><span>/runs/RUN-0014 · chọn case chạy lại</span></div><img src="img/12-rerun-pick.jpg" alt="Chọn case chạy lại" loading="lazy"><figcaption><b>Chạy lại case chọn riêng</b><ul><li>Tick từng case, hoặc "Chọn case lỗi" rồi bỏ bớt → "Run lại đã chọn".</li></ul></figcaption></figure>
+      <figure style="grid-column:1/-1"><div class="chrome"><i></i><i></i><i></i><span>/runs/RUN-0014 · tab Report</span></div><img src="img/13-report.jpg" alt="Report" loading="lazy"><figcaption><b>Report chung của team</b><ul><li>bug-report.html (skill test-report): bug khoanh đỏ, lọc, dashboard Function / UI, xuất Excel / PDF, log Asana.</li><li>Kết quả ghi ngược vào bản copy Excel trong tool.</li></ul></figcaption></figure>
+    </div>
+  </section>
+
+  <section id="s7">
+    <div class="sec-h"><span class="num">07</span><h2>Lịch sử và cài đặt</h2></div>
+    <div class="grid">
+      <figure><div class="chrome"><i></i><i></i><i></i><span>/runs</span></div><img src="img/14-runs.jpg" alt="Test Runs" loading="lazy"><figcaption><b>Test Runs</b><ul><li>Mỗi run giữ report riêng; run đang chạy có nút Theo dõi + tiến độ.</li><li>Run lại từng dòng; tick để xoá, xoá run cũ hơn 7 ngày.</li></ul></figcaption></figure>
+      <figure><div class="chrome"><i></i><i></i><i></i><span>/apps/ik-fitness/settings</span></div><img src="img/15-settings.jpg" alt="Cài đặt app" loading="lazy"><figcaption><b>Cài đặt app</b><ul><li>Biến môi trường truyền vào mỗi lần Run (<code>${env.X}</code>, ALLOW_ACCOUNT_CREATE…).</li><li>Project WebdriverIO: trạng thái, Chuẩn bị lại.</li></ul></figcaption></figure>
+    </div>
+  </section>
+
+  <footer>Nguồn: bản demo <code>qa-pipeline-demo</code> chạy trên iPhone 17 Pro Max (iOS 26.5) và Pixel_10 (Android 17). Thiết kế gốc: canvas "AI Test Automation Tool"; spec bàn giao: tài liệu "QA Pipeline — spec bản thật".</footer>
+</div>
+</body>
+</html>

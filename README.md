@@ -1,7 +1,18 @@
 # QA Pipeline — bản demo
 
 Tool web chạy trên Mac: **thêm app → lấy locator → import Excel test case → AI gen script → Run trên iOS Simulator → report**.
-Bản demo cho một người, một máy. Bản thật cho cả team: xem spec bàn giao (`docs/`).
+Bản demo cho một người, một máy. Bản thật cho cả team: xem tài liệu bàn giao bên dưới.
+
+## Tài liệu bàn giao
+
+| Tài liệu | Link |
+|---|---|
+| Spec bản thật (chức năng từng màn, mô hình dữ liệu, việc cần làm) | https://claude.ai/artifact/5fc6qKPU3oybSUvvaKswz1 |
+| UI design theo luồng (20 màn + chú thích cho dev) | https://claude.ai/artifact/1dtVCmkjQsipJRYva4u9Ez |
+| Spec report chung (skill `test-report`) | https://claude.ai/artifact/LYY1m6GNmcJyU5Nfouvi3S |
+| Ảnh chụp bản demo theo luồng | `docs/design/index.html` |
+| Video demo | `docs/qa-pipeline-demo.mp4`, `docs/qa-pipeline-demo-full.mp4` |
+| File build (.app, .apk) + Excel test case IK Fitness | [link Drive] |
 
 ## Cần có trên máy
 
