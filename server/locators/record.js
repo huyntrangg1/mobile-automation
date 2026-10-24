@@ -126,7 +126,7 @@ export function createCaptures({ store, lock, emit, map, openSession, loops = {}
     const id = `cap-${crypto.randomUUID().slice(0, 8)}`;
     const label = opts.mode === 'record' ? `Ghi locator · ${app.name}` : `AI khám phá · ${app.name}`;
     const got = lock.acquire({ kind: 'capture', id, label });
-    if (!got.ok) throw Object.assign(new Error(`Simulator đang bận: ${got.holder.label}`), { status: 409 });
+    if (!got.ok) throw Object.assign(new Error(`Thiết bị đang bận: ${got.holder.label}`), { status: 409 });
     emit('lock', lock.current());
     store.put('captures', { id, appId, mode: opts.mode, udid: opts.udid, status: 'running', screensFound: 0, polls: 0, seen: [], current: null, log: [], startedAt: new Date().toISOString() });
     const job = { stop: false };

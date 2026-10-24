@@ -89,7 +89,7 @@ export function createRunner({ store, lock, emit, dataDir, scriptPath, spawnImpl
     const app = store.get('apps', appId);
     if (!app) throw Object.assign(new Error('Không có app này'), { status: 404 });
     if (app.status !== 'ready') throw Object.assign(new Error('App chưa sẵn sàng'), { status: 409 });
-    if (!udid) throw Object.assign(new Error('Chọn simulator'), { status: 400 });
+    if (!udid) throw Object.assign(new Error('Chọn thiết bị'), { status: 400 });
     const cases = store.list('cases').filter((c) => c.appId === appId);
     const plan = closure(cases, caseIds);
     if (!plan.run.length) throw Object.assign(new Error('Chưa chọn case'), { status: 400 });
@@ -103,7 +103,7 @@ export function createRunner({ store, lock, emit, dataDir, scriptPath, spawnImpl
 
     const id = nextId();
     const got = lock.acquire({ kind: 'run', id, label: `Đang chạy ${id} · ${app.name}` });
-    if (!got.ok) throw Object.assign(new Error(`Simulator đang bận: ${got.holder.label}`), { status: 409 });
+    if (!got.ok) throw Object.assign(new Error(`Thiết bị đang bận: ${got.holder.label}`), { status: 409 });
     emit('lock', lock.current());
     const reportsDir = path.join(dataDir, 'runs', id, 'reports');
     const livePath = path.join(dataDir, 'runs', id, 'live.jsonl');

@@ -56,7 +56,7 @@ footer{color:var(--muted);font-size:13px;border-top:1px solid var(--border);padd
 <div class="wrap">
   <header class="top"><div class="logo">✓</div><h1>QA Pipeline: thiết kế tool</h1></header>
   <p class="lead">Tool web để tester thêm app, lấy locator, import Excel test case, cho AI gen script WebdriverIO, chạy trên iOS Simulator hoặc Android và xem report, không cần viết code. Ảnh dưới đây chụp từ bản demo đang chạy thật, xếp theo luồng sử dụng.</p>
-  <div class="meta"><span class="pill">iOS + Android</span><span class="pill">Design system ikqa · IBM Plex</span><span class="pill">Bản demo ngày 25/10/2026</span><span class="pill">18 màn hình</span></div>
+  <div class="meta"><span class="pill">iOS + Android</span><span class="pill">Design system ikqa · IBM Plex</span><span class="pill">Bản demo ngày 25/10/2026</span><span class="pill">17 màn hình</span></div>
 
   <div class="flow" aria-label="Luồng sử dụng 7 bước">
     <svg viewBox="0 0 1260 150" role="img" aria-label="Luồng: Thêm app, Lấy locator, Import Excel, Gen script, Run, Kết quả và report, Lịch sử">
@@ -102,7 +102,7 @@ footer{color:var(--muted);font-size:13px;border-top:1px solid var(--border);padd
     <div class="sec-h"><span class="num">03</span><h2>Test Cases</h2></div>
     <p class="sec-p">Import Excel format automation v2, lọc theo file / trạng thái script, chọn case để Generate hoặc Run.</p>
     <div class="grid one">
-      <figure><div class="chrome"><i></i><i></i><i></i><span>/apps/ik-fitness/cases?file=authentication-automation</span></div><img src="img/07-test-cases.jpg" alt="Màn Test Cases" loading="lazy"><figcaption><b>Danh sách test case</b><ul><li>Dropdown lọc theo file Excel, chip lọc trạng thái (Chưa gen, Đã gen, Gen lỗi, Cần gen lại, Có cảnh báo), ô tìm.</li><li>Nhóm theo module; cột Bắt đầu cho biết "Cài lại app" hay "Sau TC_x" (chuỗi Tiếp nối).</li><li>Nút Import Excel (kéo thả), Gen tất cả chưa có script, Generate (n), Run (n); xoá case / file / tất cả có xem trước.</li></ul></figcaption></figure>
+      <figure><div class="chrome"><i></i><i></i><i></i><span>/apps/ik-fitness/cases?file=authentication-automation</span></div><img src="img/07-test-cases.jpg" alt="Màn Test Cases" loading="lazy"><figcaption><b>Danh sách test case</b><ul><li>Dropdown lọc theo file Excel, chip lọc trạng thái (Chưa gen, Đang gen…, Đã gen, Gen lỗi, Cần gen lại, Có cảnh báo; chip chỉ hiện khi có case), ô tìm.</li><li>Nhóm theo module; cột Bắt đầu cho biết "Cài lại app" hay "Sau TC_x" (chuỗi Tiếp nối).</li><li>Nút Import Excel (kéo thả), Gen tất cả chưa có script, Generate script (n), Run (n); xoá case / file / tất cả có xem trước.</li></ul></figcaption></figure>
     </div>
   </section>
 
@@ -118,8 +118,8 @@ footer{color:var(--muted);font-size:13px;border-top:1px solid var(--border);padd
     <div class="sec-h"><span class="num">05</span><h2>Run</h2></div>
     <p class="sec-p">Kiểm tra trước khi chạy, rồi theo dõi trực tiếp: bước đang chạy cạnh màn hình thiết bị; Tạm dừng không cắt giữa case.</p>
     <div class="grid">
-      <figure><div class="chrome"><i></i><i></i><i></i><span>Test Cases · drawer Run config</span></div><img src="img/09-run-config.jpg" alt="Run config" loading="lazy"><figcaption><b>Run config</b><ul><li>Chọn thiết bị theo nền tảng app (simulator / emulator đang bật lên đầu).</li><li>Case "Tiếp nối" tự kéo theo case phía trước; case chưa có script liệt kê kèm nút gen ngay.</li><li>Case có cảnh báo: liệt kê từng case + link Xem.</li></ul></figcaption></figure>
-      <figure><div class="chrome"><i></i><i></i><i></i><span>/runs/RUN-0014 · đang chạy</span></div><img src="img/live-RUN-0014-10.jpg" alt="Run đang chạy iOS" loading="lazy"><figcaption><b><span class="tag t-ios">iOS</span>Đang chạy</b><ul><li>Bước đang chạy: ✓ xong · ● đang chạy · ✕ lệch (giá trị thật / mong đợi) · ○ chưa tới.</li><li>Màn hình Simulator làm mới mỗi giây; Log ở tab riêng.</li></ul></figcaption></figure>
+      <figure><div class="chrome"><i></i><i></i><i></i><span>/apps/ik-fitness/run?cases=… · drawer Run N case đã chọn</span></div><img src="img/09-run-config.jpg" alt="Run config" loading="lazy"><figcaption><b>Run config</b><ul><li>Chọn thiết bị theo nền tảng app (simulator / emulator đang bật lên đầu).</li><li>Case "Tiếp nối" tự kéo theo case phía trước; case chưa có script liệt kê kèm nút gen ngay.</li><li>Case có cảnh báo: liệt kê từng case + link Xem.</li></ul></figcaption></figure>
+      <figure><div class="chrome"><i></i><i></i><i></i><span>/runs/RUN-0014 · đang chạy</span></div><img src="img/live-RUN-0014-10.jpg" alt="Run đang chạy iOS" loading="lazy"><figcaption><b><span class="tag t-ios">iOS</span>Đang chạy</b><ul><li>Bước đang chạy: ✓ xong · ● đang chạy · ✕ lệch (giá trị thật / mong đợi) · ○ chưa tới.</li><li>Màn hình thiết bị làm mới mỗi giây; Log ở tab riêng.</li></ul></figcaption></figure>
       <figure><div class="chrome"><i></i><i></i><i></i><span>/runs/RUN-0022 · đang chạy</span></div><img src="img/live-RUN-0022-5.jpg" alt="Run đang chạy Android" loading="lazy"><figcaption><b><span class="tag t-and">Android</span>Đang chạy trên emulator</b><ul><li>Cùng giao diện; ảnh thiết bị lấy qua adb.</li></ul></figcaption></figure>
       <figure><div class="chrome"><i></i><i></i><i></i><span>/runs/RUN-0016 · tạm dừng</span></div><img src="img/paused.jpg" alt="Run tạm dừng" loading="lazy"><figcaption><b>Tạm dừng / Tiếp tục / Stop</b><ul><li>Tạm dừng chờ case hiện tại xong, giữ phiên Appium và trạng thái app.</li><li>Stop hỏi xác nhận; dùng được cả khi đang tạm dừng.</li></ul></figcaption></figure>
     </div>

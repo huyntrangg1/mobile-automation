@@ -1,5 +1,4 @@
-// Bảng route → trang. Các task sau thay placeholder bằng trang thật.
-import { Placeholder } from './Placeholder.jsx';
+// Bảng route → trang.
 import { Apps } from './Apps.jsx';
 import { AppSettings } from './AppSettings.jsx';
 import { LocatorMap } from './LocatorMap.jsx';
@@ -9,8 +8,6 @@ import { ScriptReview } from './ScriptReview.jsx';
 import { RunConfig } from './RunConfig.jsx';
 import { RunView } from './RunView.jsx';
 import { Runs } from './Runs.jsx';
-
-const ph = (title) => (props) => <Placeholder title={title} {...props} />;
 
 export const PAGES = [
   { path: '/apps', Comp: Apps },

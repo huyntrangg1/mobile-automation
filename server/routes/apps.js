@@ -14,7 +14,7 @@ const DEFAULT_ENV = { 'ik-fitness': { ALLOW_ACCOUNT_CREATE: '1' } };
 // template ghi đè locators/map.js → xuất lại từ locator map.
 export async function prepareApp({ store, map, emit, lock, create = createWorkspace }, app) {
   const holder = lock?.current();
-  if (holder) throw Object.assign(new Error(`Simulator đang bận: ${holder.label} — chờ xong rồi chuẩn bị lại`), { status: 409 });
+  if (holder) throw Object.assign(new Error(`Thiết bị đang bận: ${holder.label} — chờ xong rồi chuẩn bị lại`), { status: 409 });
   store.patch('apps', app.id, { status: 'preparing', error: null });
   emit('app', { id: app.id });
   try {
@@ -92,7 +92,7 @@ export default function appRoutes(ctx) {
     const a = store.get('apps', req.params.id);
     if (!a) return res.status(404).json({ error: 'Không có app này' });
     const holder = ctx.lock.current();
-    if (holder) return res.status(409).json({ error: `Simulator đang bận: ${holder.label} — chờ xong rồi chuẩn bị lại` });
+    if (holder) return res.status(409).json({ error: `Thiết bị đang bận: ${holder.label} — chờ xong rồi chuẩn bị lại` });
     prepare(a).catch(() => {});
     res.json({ ok: true });
   });

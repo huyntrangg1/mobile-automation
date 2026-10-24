@@ -44,7 +44,7 @@ export default function locatorRoutes({ store, map, captures, emit }) {
   });
   r.post('/apps/:appId/captures', wrap(async (req, res) => {
     const { mode, udid, hints, maxSteps, maxMinutes } = req.body || {};
-    if (!udid) return res.status(400).json({ error: 'Chọn simulator' });
+    if (!udid) return res.status(400).json({ error: 'Chọn thiết bị' });
     const id = await captures.start(req.params.appId, { mode, udid, hints, maxSteps, maxMinutes });
     res.status(201).json(store.get('captures', id));
   }));

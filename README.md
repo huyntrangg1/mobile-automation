@@ -1,6 +1,6 @@
 # QA Pipeline — bản demo
 
-Tool web chạy trên Mac: **thêm app → lấy locator → import Excel test case → AI gen script → Run trên iOS Simulator → report**.
+Tool web chạy trên Mac: **thêm app → lấy locator → import Excel test case → AI gen script → Run trên iOS Simulator hoặc Android → report**.
 Bản demo cho một người, một máy. Bản thật cho cả team: xem tài liệu bàn giao bên dưới.
 
 ## Tài liệu bàn giao
@@ -11,7 +11,7 @@ Bản demo cho một người, một máy. Bản thật cho cả team: xem tài 
 | UI design theo luồng (20 màn + chú thích cho dev) | https://claude.ai/artifact/1dtVCmkjQsipJRYva4u9Ez |
 | Spec report chung (skill `test-report`) | https://claude.ai/artifact/LYY1m6GNmcJyU5Nfouvi3S |
 | Ảnh chụp bản demo theo luồng | `docs/design/index.html` |
-| Video demo | `docs/qa-pipeline-demo.mp4`, `docs/qa-pipeline-demo-full.mp4` |
+| Video demo | `docs/qa-pipeline-demo-full.mp4` |
 | File build (.app, .apk) + Excel test case IK Fitness | [link Drive] |
 
 ## Cần có trên máy
@@ -45,15 +45,15 @@ Thử nhanh Android: tải [ApiDemos-debug.apk](https://github.com/appium/androi
 1. **Apps → Thêm app**: đường dẫn file `.app` (iOS Simulator) hoặc `.apk` (Android) — tool tự nhận nền tảng; tên, helper pack (chỉ pack cùng nền tảng). Tool tạo project WebdriverIO riêng cho app
    ở `workspaces/<app>/` (cài report chung bằng `vendor/test-report/scripts/install.sh`) — khoảng 1–2 phút.
 2. **Locator map → Lấy locator**, chọn 1 trong 2 chế độ:
-   - *Ghi lại khi tôi bấm*: bạn bấm qua app trên cửa sổ Simulator, tool ghi lại từng màn (đọc mỗi 0,7 s).
-     Popup hệ thống (quyền theo dõi, lưu mật khẩu) che màn hình thì tool nhắc bạn đóng.
-   - *Tự khám phá*: AI tự bấm qua app (có giới hạn số bước); cho trước email / mật khẩu test để AI vượt form.
+   - *Ghi lại khi tôi bấm*: bạn bấm qua app trên thiết bị (cửa sổ Simulator / emulator), tool ghi lại từng màn (đọc mỗi 0,7 s).
+     Popup hệ thống (quyền theo dõi, lưu mật khẩu, hộp xin quyền Android) che màn hình thì tool nhắc bạn đóng.
+   - *Tự khám phá*: AI tự bấm qua app (giới hạn số bước và 20 phút); cho trước email / mật khẩu test để AI vượt form.
    Sau đó đổi tên màn cho khớp cột Screen trong Excel, gộp màn trùng, đặt tên Target cho ô nhập không có nhãn.
 3. **Test Cases → Import Excel** (format automation v2: sheet TestCases + TestData). File được copy vào workspace;
    import lại file đã sửa → case đổi bước chuyển "Cần gen lại".
 4. Chọn case → **Generate script**. Mỗi file Excel là **một** file `tests/<file>.e2e.js`; mỗi case là một region do AI viết.
    **Scripts** (tuỳ chọn): xem / sửa code, cảnh báo thiếu locator, đánh dấu đã review.
-5. Chọn case → **Run** → chọn simulator. Case "Tiếp nối" tự kéo theo các case phía trước. Theo dõi trực tiếp, xong mở report
+5. Chọn case → **Run** → chọn thiết bị → **Start run**. Case "Tiếp nối" tự kéo theo các case phía trước. Theo dõi trực tiếp, xong mở report
    (`bug-report.html` của skill `test-report`). Kết quả ghi vào bản copy Excel trong workspace; file gốc không đổi.
 
 **Cài đặt app**: biến môi trường truyền vào mỗi lần Run (`${env.X}` trong Excel, `ALLOW_ACCOUNT_CREATE`…).
@@ -61,15 +61,21 @@ Thử nhanh Android: tải [ApiDemos-debug.apk](https://github.com/appium/androi
 ## Cấu trúc
 
 ```
-server/            Express API + SSE; store JSON ở data/
+server/            Express API + SSE; store JSON ở data/ (app.js, index.js, store.js, lock.js, events.js, paths.js)
+  routes/          các router Express
   ai/              runClaude() + prompt
-  device/          simulator, phiên Appium (cổng 4724) để lấy locator
+  device/          simulator / emulator (iOS + Android), phiên Appium (cổng 4724) để lấy locator
   locators/        page source → phần tử / locator, locator map, 2 chế độ lấy locator
   apps/            tạo workspace (template/ + helper pack)
   testcases/       import Excel, chuỗi Tiếp nối
   scripts/         khung file script + AI gen từng case
   runs/            chạy wdio, theo dõi results/
 web/               React + Vite (giao diện theo design system ikqa của canvas)
+scripts/           doctor, sync-report, smoke-session
+vendor/test-report/ bản copy report chung (skill test-report)
+samples/           app + Excel mẫu (Android ApiDemos)
+test/              test server (node:test)
+docs/              ảnh demo theo luồng, video
 workspaces/<app>/  project WebdriverIO của từng app (tool sinh)
 data/              store, ảnh màn, report từng run (data/runs/RUN-xxxx/reports)
 ```
