@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<AppiumAUT>
+  <XCUIElementTypeApplication type="XCUIElementTypeApplication" name="FitAgain" label="FitAgain" enabled="true" visible="true" accessible="false" x="0" y="0" width="440" height="956" index="0" traits="" processId="71354" bundleId="com.begamob.fitness">
+    <XCUIElementTypeWindow type="XCUIElementTypeWindow" enabled="true" visible="true" accessible="false" x="0" y="0" width="440" height="956" index="0" traits="">
+      <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="440" height="956" index="0" traits="">
+        <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="440" height="956" index="0" traits="">
+          <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="440" height="956" index="0" traits="">
+            <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="440" height="956" index="0" traits="">
+              <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="440" height="956" index="0" traits="">
+                <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="440" height="956" index="0" traits="">
+                  <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="440" height="956" index="0" traits="">
+                    <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="440" height="956" index="0" traits="">
+                      <XCUIElementTypeNavigationBar type="XCUIElementTypeNavigationBar" name="_TtGC7SwiftUI32NavigationStackHosting" enabled="true" visible="true" accessible="false" x="0" y="62" width="440" height="54" index="0" traits="">
+                        <XCUIElementTypeOther type="XCUIElementTypeOther" name="Close" label="Close" enabled="true" visible="true" accessible="false" x="24" y="66" width="52" height="36" index="0" traits="">
+                          <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="24" y="66" width="52" height="36" index="0" traits="">
+                            <XCUIElementTypeButton type="XCUIElementTypeButton" name="Close" label="Close" enabled="true" visible="true" accessible="true" x="24" y="66" width="52" height="36" index="0" traits="Button"/>
+                          </XCUIElementTypeOther>
+                        </XCUIElementTypeOther>
+                      </XCUIElementTypeNavigationBar>
+                      <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="440" height="956" index="1" traits="">
+                        <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="440" height="956" index="0" traits="">
+                          <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="440" height="956" index="0" traits="">
+                            <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="440" height="956" index="0" traits="">
+                              <XCUIElementTypeImage type="XCUIElementTypeImage" name="imgGenLoginHero" label="imgGenLoginHero" enabled="true" visible="false" accessible="false" x="0" y="-45" width="440" height="579" index="0" traits="Image"/>
+                              <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Welcome" name="Welcome" label="Welcome" enabled="true" visible="true" accessible="true" x="20" y="135" width="154" height="47" index="1" traits="StaticText"/>
+                              <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Back" name="Back" label="Back" enabled="true" visible="true" accessible="true" x="20" y="181" width="82" height="47" index="2" traits="StaticText"/>
+                              <XCUIElementTypeButton type="XCUIElementTypeButton" name="Continue with Google" label="Continue with Google" enabled="true" visible="true" accessible="true" x="16" y="484" width="408" height="57" index="3" traits="Button">
+                                <XCUIElementTypeImage type="XCUIElementTypeImage" name="icGenGoogle24" label="icGenGoogle24" enabled="true" visible="true" accessible="false" x="116" y="500" width="25" height="25" index="0" traits="Image"/>
+                                <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Continue with Google" name="Continue with Google" label="Continue with Google" enabled="true" visible="true" accessible="false" x="150" y="502" width="174" height="21" index="1" traits="StaticText"/>
+                              </XCUIElementTypeButton>
+                              <XCUIElementTypeButton type="XCUIElementTypeButton" name="Continue with Apple" label="Continue with Apple" enabled="true" visible="true" accessible="true" x="16" y="552" width="408" height="57" index="4" traits="Button">
+                                <XCUIElementTypeImage type="XCUIElementTypeImage" name="icGenApple24" label="icGenApple24" enabled="true" visible="true" accessible="false" x="122" y="568" width="24" height="25" index="0" traits="Image"/>
+                                <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Continue with Apple" name="Continue with Apple" label="Continue with Apple" enabled="true" visible="true" accessible="false" x="156" y="570" width="162" height="21" index="1" traits="StaticText"/>
+                              </XCUIElementTypeButton>
+                              <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="OR" name="OR" label="OR" enabled="true" visible="true" accessible="true" x="209" y="632" width="22" height="19" index="5" traits="StaticText"/>
+                              <XCUIElementTypeButton type="XCUIElementTypeButton" name="Continue with email" label="Continue with email" enabled="true" visible="true" accessible="true" x="16" y="674" width="408" height="57" index="6" traits="Button">
+                                <XCUIElementTypeImage type="XCUIElementTypeImage" name="icGenMail24" label="icGenMail24" enabled="true" visible="true" accessible="false" x="124" y="690" width="24" height="25" index="0" traits="Image"/>
+                                <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Continue with email" name="Continue with email" label="Continue with email" enabled="true" visible="true" accessible="false" x="157" y="692" width="160" height="21" index="1" traits="StaticText"/>
+                              </XCUIElementTypeButton>
+                              <XCUIElementTypeButton type="XCUIElementTypeButton" name="Continues as guest" label="Continues as guest" enabled="true" visible="true" accessible="true" x="16" y="742" width="408" height="57" index="7" traits="Button">
+                                <XCUIElementTypeImage type="XCUIElementTypeImage" name="icGenMail24" label="icGenMail24" enabled="true" visible="true" accessible="false" x="127" y="758" width="25" height="25" index="0" traits="Image"/>
+                                <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Continues as guest" name="Continues as guest" label="Continues as guest" enabled="true" visible="true" accessible="false" x="161" y="760" width="152" height="21" index="1" traits="StaticText"/>
+                              </XCUIElementTypeButton>
+                              <XCUIElementTypeButton type="XCUIElementTypeButton" name="Don't have an account? Create account" label="Don't have an account? Create account" enabled="true" visible="true" accessible="true" x="84" y="810" width="272" height="19" index="8" traits="Button"/>
+                              <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Your information is 100% secure. We don't sell your personal information. By submitting your email address, you agree to our Terms and Privacy" name="Your information is 100% secure. We don't sell your personal information. By submitting your email address, you agree to our Terms and Privacy" label="Your information is 100% secure. We don't sell your personal information. By submitting your email address, you agree to our Terms and Privacy" enabled="true" visible="true" accessible="true" x="16" y="852" width="408" height="46" index="9" traits="StaticText">
+                                <XCUIElementTypeLink type="XCUIElementTypeLink" name="https://begamob.com/ofs-termofuse.html" label="Terms" enabled="true" visible="true" accessible="false" x="387" y="867" width="37" height="16" index="0" traits="Link"/>
+                                <XCUIElementTypeLink type="XCUIElementTypeLink" name="https://begamob.com/bega-policy.html" label="Privacy" enabled="true" visible="true" accessible="false" x="210" y="882" width="45" height="16" index="1" traits="Link"/>
+                              </XCUIElementTypeStaticText>
+                            </XCUIElementTypeOther>
+                          </XCUIElementTypeOther>
+                        </XCUIElementTypeOther>
+                      </XCUIElementTypeOther>
+                      <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="440" height="956" index="2" traits="">
+                        <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="440" height="956" index="0" traits=""/>
+                      </XCUIElementTypeOther>
+                    </XCUIElementTypeOther>
+                  </XCUIElementTypeOther>
+                </XCUIElementTypeOther>
+              </XCUIElementTypeOther>
+            </XCUIElementTypeOther>
+            <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="440" height="956" index="1" traits="">
+              <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="false" accessible="false" x="0" y="0" width="440" height="956" index="0" traits=""/>
+            </XCUIElementTypeOther>
+          </XCUIElementTypeOther>
+        </XCUIElementTypeOther>
+      </XCUIElementTypeOther>
+    </XCUIElementTypeWindow>
+  </XCUIElementTypeApplication>
+</AppiumAUT>

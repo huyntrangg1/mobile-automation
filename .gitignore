@@ -1,0 +1,22 @@
+# Thư viện / build
+node_modules/
+/web/dist/
+
+# Dữ liệu chạy của tool (theo từng máy, chứa đường dẫn tuyệt đối)
+/data/
+/workspaces/
+/.wda-build/
+
+# File app (build) — để trên Drive, không đưa lên git
+*.app/
+*.apk
+*.ipa
+*.aab
+
+# Máy / log
+.env
+.DS_Store
+*.log
+
+# Ghi chép làm việc nội bộ
+/.superpowers/

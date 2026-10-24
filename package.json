@@ -1,0 +1,30 @@
+{
+  "name": "qa-pipeline-demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch server/index.js & vite web",
+    "build": "vite build web",
+    "start": "vite build web && node server/index.js",
+    "test": "node --test \"test/*.test.js\"",
+    "doctor": "node scripts/doctor.js",
+    "sync-report": "node scripts/sync-report.js"
+  },
+  "dependencies": {
+    "@xmldom/xmldom": "^0.9.12",
+    "exceljs": "^4.4.0",
+    "express": "^5.3.0",
+    "multer": "^2.5.0",
+    "webdriverio": "^9.32.0",
+    "xpath": "^0.0.35"
+  },
+  "devDependencies": {
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@uiw/react-codemirror": "^4.25.12",
+    "@vitejs/plugin-react": "^4.7.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.6",
+    "vite": "^5.4.21"
+  }
+}

@@ -1,0 +1,87 @@
+{
+  "name": "IK Fitness QA",
+  "version": 1,
+  "color": {
+    "themes": [{"id": "light", "name": "Light"}, {"id": "dark", "name": "Dark"}],
+    "tokens": [
+      {"name": "surface-0", "value": {"light": "#f5f6f4", "dark": "#0f1114"}, "usage": "Page background behind every report section."},
+      {"name": "surface-1", "value": {"light": "#ffffff", "dark": "#181b20"}, "usage": "Cards, KPI tiles, chart cards, tables and the header bar."},
+      {"name": "surface-2", "value": {"light": "#eef0ed", "dark": "#20242b"}, "usage": "Sunken areas: table header row, filter fields, hovered rows, bar tracks."},
+      {"name": "border", "value": {"light": "#dfe2de", "dark": "#2c313a"}, "usage": "Hairline around cards and between table rows. Decorative only."},
+      {"name": "border-strong", "value": {"light": "#8c929a", "dark": "#6b727c"}, "usage": "Borders of inputs, selects and secondary buttons (3:1 on surface-1)."},
+      {"name": "ink", "value": {"light": "#15181c", "dark": "#eef0f2"}, "usage": "Primary text and numbers on surface-0, surface-1 and surface-2."},
+      {"name": "ink-muted", "value": {"light": "#545b64", "dark": "#a3aab4"}, "usage": "Secondary text: meta values, captions, column headers, axis labels on surface-0/1/2."},
+      {"name": "brand", "value": {"light": "#c6f432", "dark": "#c6f432"}, "usage": "IK Fitness lime. Primary button fill, active filter chip, the header accent bar. Never as text on light grounds."},
+      {"name": "on-brand", "value": {"light": "#15181c", "dark": "#15181c"}, "usage": "Text and icons on brand fills."},
+      {"name": "brand-ink", "value": {"light": "#4a6600", "dark": "#c6f432"}, "usage": "Links and selected-tab text on surface-0/1."},
+      {"name": "focus", "value": {"light": "#0062a0", "dark": "#7cc4f0"}, "usage": "2px solid focus ring on every interactive element; 3:1+ on all surfaces."},
+
+      {"name": "pass", "value": {"light": "#0072b2", "dark": "#56b4e9"}, "usage": "Passed: chart fills and badge glyphs. Blue, not green, so pass and fail never rely on red/green hue."},
+      {"name": "pass-soft", "value": {"light": "#e2eff8", "dark": "#12283a"}, "usage": "Passed badge background."},
+      {"name": "pass-ink", "value": {"light": "#00598c", "dark": "#9fd2f3"}, "usage": "Passed badge text on pass-soft."},
+      {"name": "fail", "value": {"light": "#d55e00", "dark": "#f0803a"}, "usage": "Failed: chart fills and badge glyphs."},
+      {"name": "fail-soft", "value": {"light": "#fbe8da", "dark": "#3a2214"}, "usage": "Failed badge background."},
+      {"name": "fail-ink", "value": {"light": "#9c4300", "dark": "#ffb184"}, "usage": "Failed badge text on fail-soft."},
+      {"name": "blocked", "value": {"light": "#e69f00", "dark": "#f0b429"}, "usage": "Blocked: chart fills and badge glyphs."},
+      {"name": "blocked-soft", "value": {"light": "#fdf2d8", "dark": "#372c10"}, "usage": "Blocked badge background."},
+      {"name": "blocked-ink", "value": {"light": "#7a4f00", "dark": "#ffd57a"}, "usage": "Blocked badge text on blocked-soft."},
+      {"name": "skipped", "value": {"light": "#9aa0a8", "dark": "#5f6670"}, "usage": "Skipped / not run: chart fills and badge glyphs."},
+      {"name": "skipped-soft", "value": {"light": "#eceef0", "dark": "#262a31"}, "usage": "Skipped badge background."},
+      {"name": "skipped-ink", "value": {"light": "#4a5059", "dark": "#c3c8cf"}, "usage": "Skipped badge text on skipped-soft."},
+
+      {"name": "sev-critical", "value": {"light": "#7c1d0a", "dark": "#ff8a65"}, "usage": "Critical severity bars and chart segment. Darkest step of the severity ramp."},
+      {"name": "sev-major", "value": {"light": "#d55e00", "dark": "#f0803a"}, "usage": "Major severity."},
+      {"name": "sev-minor", "value": {"light": "#e69f00", "dark": "#c99a2e"}, "usage": "Minor severity."},
+      {"name": "sev-trivial", "value": {"light": "#b8bec6", "dark": "#5a616b"}, "usage": "Trivial severity."},
+
+      {"name": "chart-1", "value": {"light": "#0072b2", "dark": "#56b4e9"}, "usage": "Single-series charts (bugs by module) and the first category."},
+      {"name": "chart-2", "value": {"light": "#e69f00", "dark": "#f0b429"}, "usage": "Second category."},
+      {"name": "chart-3", "value": {"light": "#009e73", "dark": "#3cc59c"}, "usage": "Third category."},
+      {"name": "chart-4", "value": {"light": "#cc79a7", "dark": "#e29cc3"}, "usage": "Fourth category."},
+      {"name": "chart-5", "value": {"light": "#56b4e9", "dark": "#a7d8f5"}, "usage": "Fifth category."},
+      {"name": "chart-6", "value": {"light": "#d55e00", "dark": "#f0803a"}, "usage": "Sixth category."},
+      {"name": "chart-grid", "value": {"light": "#e6e8e5", "dark": "#2a2f37"}, "usage": "Gridlines and bar tracks inside charts."}
+    ]
+  },
+  "type": {
+    "fonts": [],
+    "families": {
+      "sans": "\"IBM Plex Sans\", \"Segoe UI\", system-ui, sans-serif",
+      "mono": "\"IBM Plex Mono\", ui-monospace, \"SF Mono\", Menlo, monospace"
+    },
+    "groups": [
+      {"name": "Display", "family": "sans", "styles": [
+        {"name": "kpi", "fontSize": "32px", "lineHeight": "36px", "fontWeight": 600, "letterSpacing": "-0.01em", "sample": "87.4%", "usage": "KPI tile values. Tabular numerals."},
+        {"name": "title", "fontSize": "22px", "lineHeight": "28px", "fontWeight": 600, "sample": "IK Fitness — Test Report", "usage": "Report title in the header."}
+      ]},
+      {"name": "Text", "family": "sans", "styles": [
+        {"name": "heading", "fontSize": "15px", "lineHeight": "22px", "fontWeight": 600, "sample": "Defects by Priority", "usage": "Card and section titles."},
+        {"name": "body", "fontSize": "14px", "lineHeight": "20px", "fontWeight": 400, "sample": "Workout timer resets after app is backgrounded.", "usage": "Table cells, descriptions, detail text."},
+        {"name": "body-strong", "fontSize": "14px", "lineHeight": "20px", "fontWeight": 600, "sample": "Expected", "usage": "Field labels in detail panels, emphasized cells."},
+        {"name": "caption", "fontSize": "12px", "lineHeight": "16px", "fontWeight": 500, "sample": "vs. previous run", "usage": "KPI hints, chart legends, axis labels, meta values."},
+        {"name": "overline", "fontSize": "11px", "lineHeight": "14px", "fontWeight": 600, "letterSpacing": "0.06em", "sample": "PASS RATE", "usage": "KPI labels, table column headers, meta labels. Uppercase."}
+      ]},
+      {"name": "Code", "family": "mono", "styles": [
+        {"name": "mono", "fontSize": "13px", "lineHeight": "18px", "fontWeight": 500, "sample": "BUG-1042 · TC-WK-118", "usage": "Bug IDs, test case IDs, build numbers, durations."}
+      ]}
+    ]
+  },
+  "spacing": {"tokens": [
+    {"name": "space-1", "value": "4px", "usage": "Icon-to-text gap inside badges and tags."},
+    {"name": "space-2", "value": "8px", "usage": "Gap between chips, between filter fields."},
+    {"name": "space-3", "value": "12px", "usage": "Table cell padding, legend gaps."},
+    {"name": "space-4", "value": "16px", "usage": "Card padding, gap between KPI tiles and cards."},
+    {"name": "space-5", "value": "24px", "usage": "Gap between dashboard sections."},
+    {"name": "space-6", "value": "32px", "usage": "Page side padding on desktop."}
+  ]},
+  "radius": {"tokens": [
+    {"name": "radius-sm", "value": "4px", "usage": "Badges, tags, bar ends."},
+    {"name": "radius-md", "value": "8px", "usage": "Buttons, inputs, selects."},
+    {"name": "radius-lg", "value": "12px", "usage": "Cards, KPI tiles, tables."},
+    {"name": "radius-pill", "value": "999px", "usage": "Filter chips."}
+  ]},
+  "shadow": {"tokens": [
+    {"name": "shadow-card", "value": {"light": "0 1px 2px rgba(16,18,22,0.06)", "dark": "0 1px 2px rgba(0,0,0,0.5)"}, "usage": "Cards and tiles, together with the border hairline."},
+    {"name": "shadow-pop", "value": {"light": "0 8px 24px rgba(16,18,22,0.14)", "dark": "0 8px 24px rgba(0,0,0,0.6)"}, "usage": "Dropdown menus and the detail drawer."}
+  ]}
+}

@@ -1,0 +1,4 @@
+package: name='io.appium.android.apis' versionCode='28' versionName='6.0.2' platformBuildVersionName='13' platformBuildVersionCode='33' compileSdkVersion='33' compileSdkVersionCodename='13'
+targetSdkVersion:'33'
+application-label:'API Demos'
+launchable-activity: name='io.appium.android.apis.ApiDemos'  label='' icon=''
