@@ -75,3 +75,34 @@ test('file thiếu sheet TestCases → lỗi rõ ràng, không ghi gì', async (
   assert.equal(store.list('cases').length, 0);
   assert.ok(!fs.existsSync(path.join(ws, 'data/testcases/bad.xlsx')));
 });
+
+test('import file tên khác nhưng trùng TC ID → 409 kèm file trùng, chưa ghi gì', async () => {
+  const { store, ws } = setup();
+  await importTestcases({ store, appId: 'ikf', srcPath: SRC, fileName: 'authentication-automation.xlsx', loaderPath: LOADER });
+  await assert.rejects(
+    importTestcases({ store, appId: 'ikf', srcPath: SRC, fileName: 'authentication-automation (2).xlsx', loaderPath: LOADER }),
+    (e) => e.status === 409 && e.match.file === 'authentication-automation' && e.match.overlap === 38 && e.match.total === 38 && e.match.existing === 38,
+  );
+  assert.equal(store.list('cases').length, 38);
+  assert.equal(fs.existsSync(path.join(ws, 'data/testcases/authentication-automation-2-.xlsx')), false);
+});
+
+test('into = file đã có → cập nhật file đó, giữ script case không đổi', async () => {
+  const { store, ws } = setup();
+  await importTestcases({ store, appId: 'ikf', srcPath: SRC, fileName: 'authentication-automation.xlsx', loaderPath: LOADER });
+  store.patch('cases', 'ikf:authentication-automation:TC_SPL_001', { script: { status: 'generated', warnings: [] } });
+  const r = await importTestcases({ store, appId: 'ikf', srcPath: SRC, fileName: 'authentication-automation (2).xlsx', loaderPath: LOADER, into: 'authentication-automation' });
+  assert.deepEqual([r.file, r.added, r.changed, r.removed], ['authentication-automation', 0, 0, 0]);
+  assert.equal(store.list('cases').length, 38);
+  assert.equal(store.get('cases', 'ikf:authentication-automation:TC_SPL_001').script.status, 'generated');
+  assert.equal(fs.existsSync(path.join(ws, 'data/testcases/authentication-automation-2-.xlsx')), false);
+});
+
+test('into = *new → import thành file riêng; into = file không có → 400', async () => {
+  const { store } = setup();
+  await importTestcases({ store, appId: 'ikf', srcPath: SRC, fileName: 'authentication-automation.xlsx', loaderPath: LOADER });
+  const r = await importTestcases({ store, appId: 'ikf', srcPath: SRC, fileName: 'authentication-automation (2).xlsx', loaderPath: LOADER, into: '*new' });
+  assert.equal(r.file, 'authentication-automation-2-');
+  assert.equal(store.list('cases').length, 76);
+  await assert.rejects(importTestcases({ store, appId: 'ikf', srcPath: SRC, fileName: 'x.xlsx', loaderPath: LOADER, into: 'khong-co' }), (e) => e.status === 400);
+});

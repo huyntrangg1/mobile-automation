@@ -12,7 +12,7 @@ export function createApp(ctx, routers = []) {
   app.get('/api/events', sseHandler);
   for (const r of routers) app.use('/api', r(ctx));
   // Chỉ ảnh màn / ảnh live / report — không lộ store JSON (biến môi trường của app)
-  for (const d of ['screens', 'captures', 'runs']) app.use(`/files/data/${d}`, express.static(path.join(DATA, d)));
+  for (const d of ['screens', 'captures', 'runs', 'figma', 'smoke']) app.use(`/files/data/${d}`, express.static(path.join(DATA, d)));
   const dist = path.join(ROOT, 'web/dist');
   if (fs.existsSync(dist)) {
     app.use(express.static(dist));

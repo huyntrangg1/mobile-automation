@@ -6,7 +6,12 @@ export function closure(cases, selectedIds) {
   const byId = new Map(cases.map((c) => [c.id, c]));
   const want = new Set();
   const missing = [];
-  const miss = (c, reason) => { if (!missing.some((m) => m.id === c.id)) missing.push({ id: c.id, tcId: c.tcId, reason }); };
+  // needsScript: gen script là gỡ được (không áp dụng khi chỉ thiếu case phía trước hoặc đang gen)
+  const miss = (c, reason, needsScript = false) => {
+    const m = missing.find((x) => x.id === c.id);
+    if (!m) missing.push({ id: c.id, tcId: c.tcId, reason, needsScript });
+    else if (needsScript && !m.needsScript) { m.reason += ` · ${reason}`; m.needsScript = true; }
+  };
   for (const sid of selectedIds) {
     let c = byId.get(sid);
     if (!c) continue;
@@ -23,7 +28,7 @@ export function closure(cases, selectedIds) {
   const run = cases.filter((c) => want.has(c.id)).sort((a, b) => (a.file === b.file ? a.order - b.order : a.file.localeCompare(b.file))).map((c) => c.id);
   for (const id of run) {
     const c = byId.get(id);
-    if (!READY.has(c.script?.status)) miss(c, REASON[c.script?.status] || 'Chưa có script');
+    if (!READY.has(c.script?.status)) miss(c, REASON[c.script?.status] || 'Chưa có script', c.script?.status !== 'generating');
   }
   return { run, added: run.filter((id) => !selectedIds.includes(id)), missing };
 }

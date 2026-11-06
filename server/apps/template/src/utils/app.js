@@ -23,15 +23,34 @@ export async function handleSystemAlert(timeout = 4000) {
   return false;
 }
 
-// Gỡ + cài lại app để bắt đầu như user mới
-export async function freshStart() {
+// Chờ app lên trước màn hình (queryAppState 4 = đang chạy foreground), rồi chờ màn ổn định (2 lần đọc page source giống nhau)
+// — thay cho chờ cứng: app mở nhanh thì đi tiếp ngay, splash dài thì vẫn đợi (tối đa maxMs)
+async function waitAppReady(id, maxMs = 8000) {
+  const end = Date.now() + maxMs;
+  while (Date.now() < end && (await driver.execute('mobile: queryAppState', id).catch(() => 4)) !== 4) await driver.pause(200);
+  let prev = null;
+  while (Date.now() < end) {
+    const src = await driver.getPageSource().catch(() => null);
+    if (src && src === prev) return;
+    prev = src;
+    await driver.pause(400);
+  }
+}
+
+// Gỡ + cài lại app để bắt đầu như user mới. log(text): ghi thời gian từng giai đoạn vào log của run
+// Hộp thoại hệ thống bật lên sau đó (ATT, thông báo…) → k tự đóng khi nó che màn, không chờ sẵn ở đây
+export async function freshStart({ log = () => {} } = {}) {
   const id = driver.isAndroid ? { appId: BUNDLE_ID } : { bundleId: BUNDLE_ID };
+  let t = Date.now();
+  const lap = (what) => { log(`${what} (${((Date.now() - t) / 1000).toFixed(1)}s)`); t = Date.now(); };
   await driver.execute('mobile: terminateApp', id).catch(() => {});
   await driver.execute('mobile: removeApp', id).catch(() => {});
+  lap('Gỡ app');
   await driver.execute('mobile: installApp', driver.isAndroid ? { appPath: APP_PATH } : { app: APP_PATH });
+  lap('Cài app');
   await driver.execute('mobile: activateApp', id);
-  await driver.pause(2000);
-  await handleSystemAlert(5000);
+  await waitAppReady(id);
+  lap('Mở app, chờ màn ổn định');
 }
 
 export async function restartApp() {

@@ -6,6 +6,7 @@ node_modules/
 /data/
 /workspaces/
 /.wda-build/
+/.wda-build-device/
 
 # File app (build) — để trên Drive, không đưa lên git
 *.app/
@@ -20,3 +21,7 @@ node_modules/
 
 # Ghi chép làm việc nội bộ
 /.superpowers/
+
+# Kết quả lệnh xcrun lưu nhầm vào thư mục gốc
+/simctl
+/xctrace

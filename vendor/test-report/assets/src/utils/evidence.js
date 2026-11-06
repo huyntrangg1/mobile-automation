@@ -4,12 +4,14 @@
 // near: { key: selector của phần tử mốc } — phần tử cần kiểm không có trên màn (lỗi "không hiển thị") →
 //   khoanh nét đứt ngay dưới mốc, chỗ lẽ ra phải hiện (vd dòng lỗi dưới ô Password, link dưới nút gửi); missing = true,
 //   instead = chữ đang hiện ở chỗ đó (vd lỗi khác).
-// selector có thể là hàm async trả về phần tử (vd ô nhập lấy qua page object).
+// selector có thể là hàm async trả về phần tử (vd ô nhập lấy qua page object), hoặc khung { x, y, width, height } theo point.
 
 export const textSel = (t) => `-ios predicate string:type == "XCUIElementTypeStaticText" AND name == "${t}"`;
 
-// Khung bao tất cả phần tử khớp selector (vd danh sách công tắc), đơn vị point
+// Khung bao tất cả phần tử khớp selector (vd danh sách công tắc), đơn vị point.
+// sel là khung { x, y, width, height } (pt) → dùng thẳng (vd vùng chữ đọc được trên ảnh bằng OCR, không có phần tử)
 async function rectOf(sel) {
+  if (sel && typeof sel === 'object' && 'width' in sel && 'height' in sel) return sel;
   const rects = [];
   const els = typeof sel === 'function' ? [await sel().catch(() => null)].filter(Boolean) : await $$(sel);
   for (const e of els) {

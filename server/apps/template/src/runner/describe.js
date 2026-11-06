@@ -13,5 +13,7 @@ export function describeCase(tc, data = {}) {
     for (const r of tc.rows.filter((x) => x.kind === kind && runsHere(x))) m.set(r.step, [...(m.get(r.step) || []), line(r)]);
     return [...m].map(([step, l]) => `${step}. ${l.join(' → ')}`);
   };
-  return { steps: by('Action'), expected: by('Check'), precondition: tc.pre.map(v), start: startScreen(tc) };
+  // rows: tên màn theo test case (cột Screen) cho từng dòng → report đặt tên màn trong bug theo test case
+  const rows = tc.rows.filter(runsHere).map((r) => ({ step: r.step, screen: r.screen, kind: r.kind, keyword: r.keyword, target: v(r.target) }));
+  return { steps: by('Action'), expected: by('Check'), precondition: tc.pre.map(v), start: startScreen(tc), rows };
 }

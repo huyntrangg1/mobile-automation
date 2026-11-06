@@ -18,9 +18,16 @@ const P = {
   refresh: <path d="M13 8a5 5 0 1 1-1.5-3.5M13 2.5v3h-3" />,
   warn: <path d="M8 2l6.5 11.5h-13zM8 6.5v3M8 11.5h.01" />,
   arrow: <path d="M6 4l4 4-4 4" />,
+  chev: <path d="M4 6l4 4 4-4" />,
   ext: <path d="M9 3h4v4M13 3L7.5 8.5M11 9.5V13H3V5h3.5" />,
   phone: <><path d="M4.5 1.5h7v13h-7z" /><path d="M7 12.5h2" /></>,
+  search: <><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5l3 3" /></>,
+  box: <path d="M8 1.5l5.5 3v7L8 14.5l-5.5-3v-7zM2.5 4.5L8 7.5l5.5-3M8 7.5v7" />,
   file: <path d="M4 1.5h5.5L12.5 4.5v10H4zM9.5 1.5v3h3" />,
+  layers: <path d="M8 2l6 3.2-6 3.2-6-3.2zM2 8.3l6 3.2 6-3.2M2 11.3l6 3.2 6-3.2" />,
+  film: <><path d="M2.5 3h11v10h-11z" /><path d="M5 3v10M11 3v10M2.5 6h2.5M2.5 10h2.5M11 6h2.5M11 10h2.5" /></>,
+  more: <><circle cx="3.5" cy="8" r="1" fill="currentColor" /><circle cx="8" cy="8" r="1" fill="currentColor" /><circle cx="12.5" cy="8" r="1" fill="currentColor" /></>,
+  trash: <path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 9h5.8l.6-9" />,
 };
 
 export function Icon({ name, size = 16, className = '' }) {

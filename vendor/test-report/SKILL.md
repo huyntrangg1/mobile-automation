@@ -20,7 +20,7 @@ The code in `assets/src/` (this folder) is the master copy. Projects get it thro
 
 ## Config
 ```js
-import { beforeEachTest, buildHtml, writeEnv, writeHookFailure, writePlanned, writeResult } from '../src/report/hooks.js';
+import { beforeEachTest, buildHtml, writeEnv, writeHookFailure, screenSummary, writePlanned, writeResult } from '../src/report/hooks.js';
 import SkipReporter from '../src/report/skipReporter.js';
 const REPORTS = path.join(ROOT, 'reports');
 const startedAt = new Date();
@@ -31,8 +31,9 @@ before() { writeEnv(REPORTS); },
 beforeTest() { beforeEachTest(); },
 async afterTest(test, ctx, result) {
   let shot = null;
-  if (!result.passed) { shot = path.join(REPORTS, 'screenshots', `${Date.now()}.png`); fs.mkdirSync(path.dirname(shot), { recursive: true }); await browser.saveScreenshot(shot).catch(() => { shot = null; }); }
-  writeResult(REPORTS, test, result, shot);
+  let seen = null; // screen on display when the test failed → Actual of a flow bug
+  if (!result.passed) { seen = await screenSummary(); shot = path.join(REPORTS, 'screenshots', `${Date.now()}.png`); fs.mkdirSync(path.dirname(shot), { recursive: true }); await browser.saveScreenshot(shot).catch(() => { shot = null; }); }
+  writeResult(REPORTS, test, result, shot, seen);
 },
 afterHook(test, ctx, result) { writeHookFailure(REPORTS, test, result); },
 after() { writePlanned(REPORTS); },
@@ -48,13 +49,16 @@ For a non-iOS app, set the `APP_VERSION` environment variable. On iOS the versio
    - then `it(title, …)`.
 
    Without `planTest`, the row cannot be marked Not Run and nothing is written back to Excel.
-3. At the start of the test, call `setCase({ id, title, priority, feature, file, dataSet, run, precondition, steps, expected })`. Use `fillTemplate` to fill in the lines.
+3. At the start of the test, call `setCase({ id, title, priority, feature, file, dataSet, run, precondition, steps, expected, rows })`. Use `fillTemplate` to fill in the lines.
+   - `rows` (optional): the test case rows `[{ step, screen, kind, keyword, target }]`, so bug titles use the screen names from the test case.
 4. Read the value from the app. Then call `snapshot('<screen>', { key: selectorOfTheCheckedElement }, { key: anchor })` on that same screen, before navigating away.
    - `anchor` (optional) is for "is displayed" checks: the element the checked one should appear right under, e.g. the Password field for "Password must be at least 8 characters", the submit button for a link below it. A selector or an async function returning the element.
    - If the checked element is missing, the report boxes the spot under the anchor with a dashed red frame, and quotes any text found there in Actual.
 5. For each check, call `softAssert().eq(step, label, actual, expected, evidence[key], { keyword, target, value, screen })`. Finish with `assertAll()`.
    - The last argument lets the report word the bug naturally (see "Bug fields" in reference.md). Without it the report falls back to the label.
    - Log every action with `logStep({ kind: 'Action', step, screen, keyword, target, value, ok })` so Steps to Reproduce follow the real order.
+
+- Design checks against Figma (`Verify design …`, from the QA Pipeline) carry their own wording in `design`; see "Design checks" in reference.md.
 
 ## Rules for checks
 - **The label names what is checked, never the data.** Same failure on other data sets → one representative bug.

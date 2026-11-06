@@ -50,3 +50,14 @@ test('toPrompt mỗi phần tử một dòng, có loại và locator', () => {
   assert.match(p, /Button "Continue with email"/);
   assert.match(p, /TextField .*Enter your email/);
 });
+
+test('giữ phần tử Other có nhãn accessibility (vd progress bar "Onboarding progress") và ProgressIndicator; bỏ Other không tên / không accessible', () => {
+  const xml = `<?xml version="1.0" encoding="UTF-8"?><AppiumAUT><XCUIElementTypeApplication type="XCUIElementTypeApplication" name="T" visible="true" x="0" y="0" width="402" height="874"><XCUIElementTypeWindow type="XCUIElementTypeWindow" visible="true" x="0" y="0" width="402" height="874">
+<XCUIElementTypeOther type="XCUIElementTypeOther" value="0%" name="Onboarding progress" label="Onboarding progress" enabled="true" visible="true" accessible="true" x="72" y="85" width="258" height="6"/>
+<XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="402" height="874"/>
+<XCUIElementTypeOther type="XCUIElementTypeOther" name="container" label="" enabled="true" visible="true" accessible="false" x="0" y="0" width="402" height="874"/>
+<XCUIElementTypeProgressIndicator type="XCUIElementTypeProgressIndicator" value="50%" name="Loading" enabled="true" visible="true" accessible="true" x="10" y="10" width="100" height="4"/>
+</XCUIElementTypeWindow></XCUIElementTypeApplication></AppiumAUT>`;
+  const els = parseElements(xml);
+  assert.deepEqual(els.map((e) => [e.type, e.name, e.value, e.locator]), [['Other', 'Onboarding progress', '0%', '~Onboarding progress'], ['ProgressIndicator', 'Loading', '50%', '~Loading']]);
+});

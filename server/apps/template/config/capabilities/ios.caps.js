@@ -15,14 +15,22 @@ const ios = {
   'appium:app': APP_PATH,
   'appium:bundleId': BUNDLE_ID,
   'appium:noReset': true,
-  'appium:derivedDataPath': WDA_DIR,
-  'appium:usePrebuiltWDA': process.env.WDA_PREBUILT === '1',
-  'appium:reduceMotion': true,
+  // Simulator đã cài WebDriverAgent → mở thẳng (nhanh hơn ~3s mỗi run); chưa có thì xcodebuild từ bản build sẵn
+  ...(process.env.WDA_PREINSTALLED === '1'
+    ? { 'appium:usePreinstalledWDA': true }
+    : { 'appium:derivedDataPath': WDA_DIR, 'appium:usePrebuiltWDA': process.env.WDA_PREBUILT === '1' }),
+  // Chạy case để đưa app tới một màn rồi dùng tiếp: giữ hiệu ứng (REDUCE_MOTION=0), không tắt app khi xong (KEEP_APP_OPEN=1)
+  'appium:reduceMotion': process.env.REDUCE_MOTION !== '0',
+  ...(process.env.KEEP_APP_OPEN === '1' ? { 'appium:shouldTerminateApp': false } : {}),
   'appium:language': 'en',
   'appium:locale': 'en_US',
   'appium:wdaLaunchTimeout': 120000,
   'appium:newCommandTimeout': 240,
   'appium:settings[waitForIdleTimeout]': 1,
+  // k.url đọc URL đầy đủ của trang web app mở ra (Safari / SFSafariViewController) qua Web Inspector
+  'appium:includeSafariInWebviews': true,
+  'appium:additionalWebviewBundleIds': ['com.apple.SafariViewService'],
+  'appium:webviewConnectTimeout': 5000,
 };
 
 const android = {
@@ -33,6 +41,7 @@ const android = {
   'appium:appPackage': BUNDLE_ID,
   ...(process.env.APP_ACTIVITY ? { 'appium:appActivity': process.env.APP_ACTIVITY } : {}),
   'appium:noReset': true,
+  ...(process.env.KEEP_APP_OPEN === '1' ? { 'appium:shouldTerminateApp': false, 'appium:dontStopAppOnReset': true } : {}),
   'appium:autoGrantPermissions': false,
   'appium:language': 'en',
   'appium:locale': 'US',

@@ -1,0 +1,2 @@
+2026-11-03 — SKILL.md gốc sửa lần cuối; nguồn: ~/Downloads/testcase-v2-kit 2/testcase-v2-kit/.claude/skills/select-automation-testcases
+Đồng bộ lại: npm run sync-select-skill (đặt skill gốc ở ../.claude/skills/select-automation-testcases hoặc QAPD_SELECT_SKILL)

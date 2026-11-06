@@ -10,9 +10,12 @@ Bước {{step}}/{{maxSteps}}.
 
 Chọn MỘT thao tác tiếp theo:
 - "tap": bấm một phần tử chưa thử, ưu tiên phần tử dẫn tới màn mới (nút tiếp tục, link, tab). Tránh nút đăng nhập Google/Apple, link web, nút xoá tài khoản / đăng xuất.
+  TUYỆT ĐỐI không bấm nút mua / đăng ký / dùng thử (Subscribe, Buy, Continue ở paywall, Start free trial, Get Premium…). Gặp paywall / IAP / quảng cáo: chọn nút đóng (X, Close, Not now, Maybe later, Skip) hoặc "back"; không có thì "relaunch".
 - "type": nhập "text" vào ô nhập (dùng dữ liệu gợi ý nếu hợp).
 - "back": quay lại màn trước (khi màn này đã khám phá hết).
 - "relaunch": mở lại app từ đầu (khi kẹt).
 - "done": khi không còn màn mới đáng khám phá.
 
 "locator" PHẢI chép nguyên văn một locator trong danh sách trên (sau dấu →). "screenName" là tên ngắn cho màn hiện tại theo tiêu đề / mục đích (vd "Log In", "Sex", "Height"), dùng tên đã có nếu đây là màn đã ghi.
+
+"next": thêm tối đa 5 thao tác tap / type KHÁC đáng thử trên CHÍNH màn này (ưu tiên giảm dần, cùng quy tắc tránh như trên, locator chép nguyên văn). Lần sau quay lại màn này tool làm tiếp theo danh sách mà không hỏi lại — bỏ trống nếu không còn gì đáng thử.

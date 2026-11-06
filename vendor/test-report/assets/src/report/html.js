@@ -4,7 +4,7 @@
 
 import fs from 'node:fs';
 import { classify, prioritize, SEVERITY } from './classify.js';
-import { parseLine, actionText, lookText, whenText, checkText, flowText, splitPrecondition } from './phrasing.js';
+import { parseLine, actionText, lookText, whenText, checkText, flowText, splitPrecondition, userActions, seenText, NAV_ERROR } from './phrasing.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const show = (v) => (typeof v === 'string' ? `"${v}"` : JSON.stringify(v));
@@ -17,7 +17,7 @@ const uniqArr = (a) => [...new Set(a)];
 
 // Văn bản bug (Title / Precondition / Steps / Actual / Expected / Attachment) — để dán vào Jira / Asana / Excel
 export function bugText(b) {
-  const screens = b.screens.map((x) => x.screen);
+  const screens = areasOf(b);
   return [
     b.title,
     `Priority: ${b.priority}   Severity: ${b.severity}   Loại: ${b.type}`,
@@ -31,9 +31,103 @@ export function bugText(b) {
     'Actual Result:', `- ${b.actual}`,
     '',
     'Expected Result:', `- ${b.expectedShort}`,
-    ...(b.screens.some((x) => x.image) ? ['', 'Attachment:', '- Ảnh evidence (phần lỗi khoanh đỏ)'] : []),
+    ...(b.screens.some((x) => x.image) ? ['', 'Attachment:', b.noBox ? '- Ảnh màn hình lúc bị chặn' : b.design ? '- Ảnh Figma (trái) và app (phải), chỗ lệch khoanh đỏ' : '- Ảnh evidence (phần lỗi khoanh đỏ)'] : []),
   ].join('\n');
 }
+
+// Điểm kiểm "app đang ở đúng màn": nhãn kiểu Tiêu đề / Tới / Sang / Mở lại / … về, hoặc đúng điểm kiểm ngay sau dòng Nav của màn
+const SCREEN_LABEL = /^(tiêu đề|tới |sang |vào |mở lại|đóng .* về|hết .* sang|.* sang thẳng)/i;
+function isScreenCheck(b, rows = []) {
+  if (SCREEN_LABEL.test(String(b.label || ''))) return true;
+  return rows.some((x, i) => x.kind === 'Nav' && rows[i + 1]?.kind === 'Check' && rows[i + 1].label === b.label);
+}
+
+// Gộp điểm kiểm lệch trong 1 test case thành 1 bug khi chúng là cùng 1 lỗi (mỗi bug thật = 1 card, như tester tự log):
+//   1) Màn sai: sau cùng 1 thao tác mà điểm kiểm "đúng màn" lệch → các điểm lệch khác sau thao tác đó là hệ quả, gộp vào nó.
+//   2) Màn khác test case / design ở nhiều điểm nội dung (chữ, phần tử phải có, trạng thái chọn, giá trị…) cùng lúc
+//      (sau cùng 1 thao tác, trên cùng màn, ≥ 2 loại kiểm) → 1 bug "Màn S khác test case ở N điểm" (vd Paywall chưa theo design).
+//   3) Cùng loại kiểm trên cùng màn (vd 2 lựa chọn cùng không tự bỏ chọn, 2 lựa chọn cùng sai số logo) → 1 bug.
+//   Thừa phần tử (Verify not displayed), bố cục, nút bật / tắt không gộp vào nhóm nội dung (vd sai chữ nút CTA và thừa nút Back = 2 bug).
+// Bug gộp: câu chữ của điểm kiểm đầu, Actual / Expected ghép các điểm, Steps dài nhất, đủ ảnh evidence, Severity cao nhất.
+const CONTENT = /^Verify (text|displayed|selected|value|placeholder|count|order|attribute)$/;
+// So với Figma: mỗi màn gom theo nhóm (cùng keyword "Verify design <nhóm>") → tiêu đề nói số điểm lệch
+const DESIGN_GROUP = {
+  text: (n) => `có ${n} chỗ chữ khác Figma`,
+  layout: (n) => `có ${n} phần tử lệch vị trí / kích thước so với Figma`,
+  font: (n) => `có ${n} chữ sai cỡ so với Figma`,
+  color: (n) => `có ${n} chỗ sai màu so với Figma`,
+  image: (n) => `có ${n} icon / ảnh / vùng khác Figma`,
+};
+// Câu Actual của nhóm nội dung: bỏ "khi …" (đã có ở tiêu đề / Steps) để các điểm giống nhau ở nhiều test không lặp lại
+const noWhen = (s, when) => (when ? String(s).split(` ${when}`).join('') : String(s).replace(/\s+khi [^.;]*(?=[.;])/g, ''));
+function mergeChecks(list) {
+  const used = new Set();
+  const groups = [];
+  for (const p of list) {
+    if (!p.screenCheck || used.has(p)) continue;
+    const g = list.filter((x) => !used.has(x) && x.trigger === p.trigger && x.screenCheck === false);
+    used.add(p);
+    g.forEach((x) => used.add(x));
+    groups.push([p, ...g]);
+  }
+  const byMoment = new Map();
+  for (const x of list) {
+    if (used.has(x) || !CONTENT.test(x.keyword || '')) continue;
+    const k = `${x.trigger}|${x.screen}`;
+    if (!byMoment.has(k)) byMoment.set(k, []);
+    byMoment.get(k).push(x);
+  }
+  for (const g of byMoment.values()) {
+    if (new Set(g.map((x) => x.keyword)).size < 2) continue; // cùng 1 loại kiểm → để bước 3 (giữ câu chữ của loại đó)
+    g.forEach((x) => used.add(x));
+    g.content = true;
+    groups.push(g);
+  }
+  const byKind = new Map();
+  for (const x of list) {
+    if (used.has(x)) continue;
+    const k = `${x.keyword || x.label}|${x.screen}`;
+    if (!byKind.has(k)) byKind.set(k, []);
+    byKind.get(k).push(x);
+  }
+  groups.push(...byKind.values());
+  // Giữ thứ tự gặp lỗi trong test
+  groups.sort((a, b) => list.indexOf(a[0]) - list.indexOf(b[0]));
+  // App không ở đúng màn sau thao tác = sai luồng (lỗi chức năng), không phải "thiếu chữ trên màn"
+  const wrongScreen = (b) => (b.screenCheck && SEVERITY.indexOf(b.severity) < SEVERITY.indexOf('Major')
+    ? { ...b, type: 'Function', kind: 'screen', severity: 'Major', reason: 'App không ở đúng màn sau thao tác: sai luồng so với test case', unverified: [] }
+    : b);
+  return groups.map((g) => {
+    const [first, ...rest] = g;
+    const p = wrongScreen(first);
+    if (!rest.length) return p;
+    const all = [p, ...rest];
+    const top = all.reduce((m, x) => (SEVERITY.indexOf(x.severity) > SEVERITY.indexOf(m.severity) ? x : m), p);
+    const longest = all.reduce((m, x) => (x.stepsClean.length > m.stepsClean.length ? x : m), p);
+    const design = DESIGN_GROUP[String(p.keyword || '').replace(/^Verify design\s*/, '')];
+    const short = g.content ? `Màn ${p.screen} khác test case ở ${all.length} điểm${p.when ? ` ${p.when}` : ''}`
+      : /^Verify design/.test(p.keyword || '') && design ? `Màn ${p.screen} ${design(all.length)}` : p.short;
+    return {
+      ...p,
+      short,
+      title: `[BUG][${p.screen || p.feature}] ${short}`,
+      contentGroup: Boolean(g.content),
+      severity: top.severity, reason: top.reason, kind: top.kind, type: top.type,
+      unverified: uniqArr(all.flatMap((x) => x.unverified)),
+      labels: all.map((x) => x.label),
+      actual: uniqArr(all.map((x) => (g.content ? noWhen(x.actual, x.when) : x.actual))).join(' '),
+      expectedShort: uniqArr(all.map((x) => x.expectedShort)).join(' '),
+      steps: longest.steps,
+      stepsClean: longest.stepsClean,
+      tcExpected: uniqArr(all.flatMap((x) => x.tcExpected)),
+      facts: { ...p.facts, checks: all.flatMap((x) => x.facts?.checks || []), tcExpected: uniqArr(all.flatMap((x) => x.tcExpected)) },
+      extraShots: rest.filter((x) => x.image).map((x) => ({ screen: x.screen, image: x.image, found: x.found, missing: x.missing, noBox: x.noBox, design: Boolean(x.design) })),
+    };
+  });
+}
+
+// Màn bị ảnh hưởng (không lặp khi 1 bug có nhiều ảnh trên cùng màn)
+const areasOf = (b) => uniqArr(b.screens.map((x) => x.screen).filter(Boolean));
 
 // Ghép bug từ test case (xlsx) + điểm kiểm bị lệch. Câu chữ từng trường: phrasing.js (định nghĩa ở reference.md → Bug fields)
 //   Steps lấy từ nhật ký bước đã chạy (r.steps) — đúng thứ tự thật; không có nhật ký thì từ cột Steps của test case
@@ -51,6 +145,11 @@ function buildBugs(r, env, tapped = new Set()) {
   };
   // Thao tác theo cột Steps (không có nhật ký): "2. Enter "Email" = a → Tap "X"" → [{ step, keyword, target, value }]
   const planned = (c.steps || []).flatMap((l) => stripNo(l).split(' → ').map((x) => ({ step: stepNo(l), ...parseLine(x) })));
+  // Tên màn theo test case (cột Screen) cho dòng cùng step + phần tử; test case không ghi màn → null (dùng màn trên app)
+  const sheetScreen = (kind, step, target) => (c.rows || []).find((x) => x.kind === kind && x.step === step && x.target === target)?.screen || null;
+  // Dữ kiện gốc của bug (không qua mẫu câu) — form Log Asana gửi cho AI viết lại (reference.md → "Cách viết bug")
+  const factsOf = (extra) => ({ tc: { id: c.id || null, title: c.title || String(r.title || '').replace(c.id || '', '').trim(), feature }, seen: r.seen || null, checks: [], ...extra });
+  const errText = (e) => String(e || '').split('\n').slice(0, 3).join('\n').slice(0, 400) || null;
   const finish = (b) => {
     // Severity theo giá trị gốc của điểm kiểm (không theo câu mô tả đã ghép); Priority tính sau khi gộp bug (dedupe)
     const cls = classify({ ...b, actual: b.actualRaw, expected: b.expectedRaw, tcPriority: c.priority });
@@ -59,77 +158,170 @@ function buildBugs(r, env, tapped = new Set()) {
       ...b, ...cls, feature, pre, stepsClean: [...preSteps, ...b.steps],
       tcId: c.id || '—', tcPriority: c.priority || '—', where: c.id ? `${c.id} · ${c.title || String(r.title).replace(c.id, '').trim()}` : r.title,
     };
-    out.title = `[BUG][${feature}${b.screen ? ` - ${b.screen}` : ''}] ${b.short}`;
+    out.title = `[BUG][${b.screen || feature}] ${b.short}`;
     return out;
   };
-  if (r.bugs.length) {
-    return r.bugs.map((b) => {
-      // Điểm kiểm cũ không ghi keyword → lấy từ cột Expected cùng step, khớp theo tên phần tử trong nhãn
-      const guess = (c.expected || []).filter((l) => stepNo(l) === b.step).flatMap((l) => stripNo(l).split(' → ').map(parseLine))
-        .find((x) => x.target && String(b.label).includes(x.target)) || {};
-      const info = { keyword: b.keyword || guess.keyword, target: b.target ?? guess.target, value: b.value ?? guess.value };
-      const at = Number.isInteger(b.at) ? b.at : log.findIndex((s) => s.kind === 'Check' && s.step === b.step && s.label === b.label);
-      // Không có nhật ký: bỏ thao tác nhấn chính phần tử đang kiểm ở cùng step (nhấn nút gửi diễn ra sau khi kiểm)
-      const done = at >= 0
-        ? log.slice(0, at).filter((s) => s.kind === 'Action')
-        : planned.filter((x) => x.step < b.step || (x.step === b.step && !(x.keyword === 'Tap' && x.target === info.target)));
-      const screen = b.screen || `Step ${b.step}`;
-      const actionable = Boolean(info.target) && tapped.has(info.target);
-      const t = checkText({ ...b, ...info, screen }, whenText(done, { ...b, ...info, screen }));
-      return finish({
-        ...b, ...info, screen, actionable,
-        // Phần tử cần có nhưng không có → gộp với bug chặn luồng vì không thấy cùng phần tử đó (dedupe)
-        missingTarget: ((/^Verify (displayed|text)$/.test(info.keyword || '') && b.actual === false) || b.actual == null) ? info.target : null,
-        short: t.short,
-        steps: [...done.map(actionText), lookText({ ...b, ...info, screen })],
+  const checkBugs = r.bugs.map((b) => {
+    // Điểm kiểm cũ không ghi keyword → lấy từ cột Expected cùng step, khớp theo tên phần tử trong nhãn
+    const guess = (c.expected || []).filter((l) => stepNo(l) === b.step).flatMap((l) => stripNo(l).split(' → ').map(parseLine))
+      .find((x) => x.target && String(b.label).includes(x.target)) || {};
+    const info = { keyword: b.keyword || guess.keyword, target: b.target ?? guess.target, value: b.value ?? guess.value };
+    const at = Number.isInteger(b.at) ? b.at : log.findIndex((s) => s.kind === 'Check' && s.step === b.step && s.label === b.label);
+    // Không có nhật ký: bỏ thao tác nhấn chính phần tử đang kiểm ở cùng step (nhấn nút gửi diễn ra sau khi kiểm)
+    const done = at >= 0
+      ? log.slice(0, at).filter((s) => s.kind === 'Action')
+      : planned.filter((x) => x.step < b.step || (x.step === b.step && !(x.keyword === 'Tap' && x.target === info.target)));
+    const screen = sheetScreen('Check', b.step, info.target) || b.screen || `Step ${b.step}`;
+    const actionable = Boolean(info.target) && tapped.has(info.target);
+    const when = whenText(done, { ...b, ...info, screen });
+    const t = checkText({ ...b, ...info, screen }, when);
+    const acts = userActions(done);
+    return finish({
+      ...b, ...info, screen, actionable,
+      // Phần tử cần có nhưng không có → gộp với bug chặn luồng vì không thấy cùng phần tử đó (dedupe)
+      missingTarget: ((/^Verify (displayed|text)$/.test(info.keyword || '') && b.actual === false) || b.actual == null) ? info.target : null,
+      // Gộp trong TC (mergeChecks): sau cùng thao tác nào (số thao tác người dùng đã làm), có phải điểm kiểm "đúng màn" không
+      trigger: acts.length,
+      when,
+      screenCheck: isScreenCheck({ ...b, ...info }, c.rows),
+      short: t.short,
+      steps: [...acts.map(actionText), lookText({ ...b, ...info, screen })],
+      tcExpected: (c.expected || []).filter((l) => stepNo(l) === b.step),
+      actual: t.actual,
+      expectedShort: t.expected,
+      actualRaw: b.actual,
+      expectedRaw: b.expected,
+      facts: factsOf({
+        screen,
+        // Màn ngay lúc lệch (addBug đọc); report cũ chưa có → màn lúc test kết thúc, chỉ khi sau điểm kiểm không còn thao tác nào
+        seen: b.seen || (at >= 0 && !log.slice(at + 1).some((s) => s.kind === 'Action') ? r.seen || null : null),
+        checks: [{ step: b.step, screen, label: b.label, keyword: info.keyword || null, target: info.target ?? null, value: info.value ?? null, actual: b.actual ?? null, expected: b.expected ?? null }],
         tcExpected: (c.expected || []).filter((l) => stepNo(l) === b.step),
-        actual: t.actual,
-        expectedShort: t.expected,
-        actualRaw: b.actual,
-        expectedRaw: b.expected,
-      });
+      }),
     });
-  }
+  });
+  // Bước chặn luồng tester cho chạy tiếp (chế độ sửa tay: Skip / Use element) → 1 bug mỗi bước, viết như bug chặn luồng
+  const flows = (r.flows || []).map((f) => {
+    const done = log.slice(0, f.at).filter((s) => s.kind === 'Action');
+    const last = userActions(done).at(-1);
+    // Bước nav (không tới được màn): màn của bug = màn đang đứng khi thao tác cuối, không phải màn không tới được
+    const at = f.target === '(screen)' && last ? sheetScreen('Action', last.step, last.target) || last.screen || f.screen : f.screen;
+    const t = flowText(f.error, { last, failed: { prevScreen: at, screen: f.target === '(screen)' ? null : f.screen }, seen: f.seen });
+    return finish({
+      step: f.step, label: 'Luồng', screen: t.screen, short: t.short, blocked: true, missingTarget: null,
+      steps: userActions(done).map(actionText), tcExpected: [], actual: t.actual, expectedShort: t.expected, image: f.image, found: false, noBox: true,
+      facts: factsOf({ screen: t.screen, error: errText(f.error), seen: f.seen || r.seen || null }),
+    });
+  });
+  // Phần tử cần có mà không có → Actual = màn đang hiện lúc đó (vd bottom sheet khác che màn); "không hiển thị X" đã có ở Title.
+  //   Bug gộp có cả điểm lệch loại khác → giữ câu cũ, nối thêm câu màn đang hiện
+  const checks = mergeChecks(checkBugs).map((x) => {
+    const ks = x.facts?.checks || [];
+    const s = seenText(x.facts?.seen);
+    if (!s || !(x.missingTarget || ks.some((k) => k.actual == null))) return x;
+    return { ...x, actual: ks.every((k) => k.actual == null) ? s : `${x.actual} ${s}` };
+  });
+  // Failed: các điểm kiểm lệch (+ bước đã cho chạy tiếp) là đủ. Blocked: thêm bug chặn luồng (giữ cả hai)
+  if (r.status !== 'blocked' && (checks.length || flows.length)) return [...checks, ...flows];
   // Blocked do môi trường / dữ liệu → không phải bug của app, chỉ hiện lý do ở dòng test
-  if (r.status === 'blocked' && r.blockKind === 'env') return [];
+  if (r.status === 'blocked' && r.blockKind === 'env') return [...checks, ...flows];
   // Không qua điểm kiểm: Blocked (bug chặn luồng) hoặc Failed bằng assert thường → 1 bug từ thông báo lỗi
   const blocked = r.status === 'blocked';
   let done;
   let failed;
-  const bad = log.findIndex((s) => s.ok === false);
+  // Điểm kiểm lệch (soft assert) không làm dừng test → không phải chỗ bị chặn
+  const bad = log.findIndex((s) => s.ok === false && s.kind !== 'Check');
   if (bad >= 0) {
     failed = log[bad];
     done = log.slice(0, bad).filter((s) => s.kind === 'Action');
     failed.prevScreen = [...log.slice(0, bad)].reverse().find((s) => s.screen)?.screen;
+  } else if (log.some((s) => s.kind === 'Action')) {
+    // Có nhật ký nhưng bước lỗi không ghi vào (vd chờ màn kế tiếp quá lâu) → Steps = các thao tác đã chạy
+    done = log.filter((s) => s.kind === 'Action');
+    failed = { kind: 'Nav', prevScreen: done.at(-1).screen };
   } else {
     // Không có nhật ký: cắt Steps tới thao tác có phần tử không tìm thấy (nếu nhận ra trong thông báo lỗi).
     //   Không tới được màn (Nav): cắt trước thao tác đầu tiên trên phần tử dấu hiệu của màn đó
     const err = String(r.error || '');
-    const nav = err.match(/Không tới được màn .+?: không thấy "(.+?)"/);
-    const name = (nav || err.match(/name == \\?"([^"\\]+)/) || err.match(/Không thấy (?:ô nhập )?"(.+?)"/) || [])[1];
+    const nav = err.match(NAV_ERROR);
+    const name = (nav ? [, nav[3]] : err.match(/name == \\?"([^"\\]+)/) || err.match(/Không thấy (?:ô nhập )?"(.+?)"/) || [])[1];
     const i = name ? planned.findIndex((x) => x.target === name) : -1;
-    done = i >= 0 ? planned.slice(0, i) : planned;
+    // Nav: cắt trước dòng Nav của màn đó trong test case; màn không có trong test case → bị chặn ở Precondition, chưa chạy step nào
+    const rows = c.rows || [];
+    const navAt = nav ? rows.findIndex((x) => x.kind === 'Nav' && x.target === nav[1]) : -1;
+    const inCase = nav && rows.some((x) => x.screen === nav[1]);
+    if (i >= 0) done = planned.slice(0, i);
+    else if (navAt >= 0) done = rows.slice(0, navAt).filter((x) => x.kind === 'Action');
+    else done = nav && rows.length && !inCase ? [] : planned;
     failed = i >= 0 && !nav ? planned[i] : null;
   }
-  const t = flowText(r.error, { last: done.at(-1), failed, startScreen: start });
+  const last = userActions(done).at(-1);
+  if (failed && last) failed.prevScreen = sheetScreen('Action', last.step, last.target) || failed.prevScreen;
+  const t = flowText(r.error, { last, failed, startScreen: start, seen: r.seen });
   const err = String(r.error || '');
-  const missingTarget = /Không tới được màn/.test(err) ? null
+  const missingTarget = NAV_ERROR.test(err) ? null
     : failed?.target || (err.match(/name == \\?"([^"\\]+)/) || err.match(/Không thấy (?:ô nhập )?"(.+?)"/) || [])[1] || null;
-  return [finish({
+  const stop = finish({
     step: null,
     label: blocked ? 'Luồng' : 'Kết quả',
     screen: t.screen,
     short: t.short,
     blocked,
     missingTarget,
-    steps: [...done, ...(failed?.kind === 'Action' || (failed && !failed.kind) ? [failed] : [])].map(actionText),
+    steps: userActions([...done, ...(failed?.kind === 'Action' || (failed && !failed.kind) ? [failed] : [])]).map(actionText),
     tcExpected: [],
     actual: t.actual,
     expectedShort: t.expected,
     image: r.failShot,
     found: false,
     noBox: true,
-  })];
+    facts: factsOf({ screen: t.screen, error: errText(r.error) }),
+  });
+  const story = blocked ? tellStory(checks, stop) : null;
+  return story ? [...checks.filter((x) => !story.parts.includes(x)), story.bug, ...flows] : [...checks, ...flows, stop];
+}
+
+// TC bị chặn mà trước đó đã có điểm lệch trên cùng màn (vd tutorial sai tiêu đề, sai bước rồi kết thúc sớm) → 1 bug kể lại
+// theo thứ tự: "Sau khi <thao tác>: <điểm lệch>; <điểm lệch>. Sau khi <thao tác>: app hiển thị màn …". Người đọc thấy cả chuỗi,
+// không phải tự ghép từ nhiều mẩu ("Không hiển thị Step 2 of 4", "Không thấy Tap here"…). Điểm lệch ở màn khác vẫn là bug riêng.
+function tellStory(checks, stop) {
+  const parts = checks.filter((x) => x.screen && x.screen === stop.screen);
+  if (!parts.length) return null;
+  const sentences = [];
+  let head = null;
+  for (const x of parts) {
+    const when = x.when || '';
+    const h = !when ? 'Ban đầu' : /^khi vừa/.test(when) ? when.replace(/^./, (ch) => ch.toUpperCase()) : `Sau ${when}`;
+    const point = noWhen(x.actual, when).replace(/\.$/, '').replace(/^./, (ch) => ch.toLowerCase());
+    if (h === head) sentences[sentences.length - 1] += `; ${point}`;
+    else sentences.push(`${h}: ${point}`);
+    head = h;
+  }
+  // Câu của lỗi chặn bắt đầu bằng đúng thao tác vừa kể ("Sau khi nhấn X, …") → nối vào câu đó, không lặp "Sau khi nhấn X"
+  const tail = head && stop.actual.startsWith(`${head}, `) ? stop.actual.slice(head.length + 2) : null;
+  if (tail) sentences[sentences.length - 1] += `; ${tail.replace(/\.$/, '')}`;
+  const actual = [...sentences, ...(tail ? [] : [stop.actual])].map((s) => (/[.!?]$/.test(s) ? s : `${s}.`)).join(' ');
+  const root = parts[0];
+  const all = [...parts, stop];
+  const top = all.reduce((m, x) => (SEVERITY.indexOf(x.severity) > SEVERITY.indexOf(m.severity) ? x : m), root);
+  return {
+    parts,
+    bug: {
+      ...root,
+      severity: top.severity, reason: top.reason, kind: top.kind, type: top.type,
+      unverified: uniqArr(all.flatMap((x) => x.unverified)),
+      blocked: true,
+      stopLink: true, // dòng "⛔ Dừng" của test trỏ về bug này
+      labels: uniqArr(parts.flatMap((x) => x.labels || [x.label])),
+      actual,
+      expectedShort: uniqArr(all.map((x) => x.expectedShort)).join(' '),
+      steps: stop.steps,
+      stepsClean: stop.stepsClean,
+      facts: { ...stop.facts, checks: parts.flatMap((x) => x.facts?.checks || []), tcExpected: uniqArr(parts.flatMap((x) => x.tcExpected || [])) },
+      extraShots: [...parts.slice(1).filter((x) => x.image), stop].filter((x) => x.image)
+        .map((x) => ({ screen: x.screen, image: x.image, found: x.found, missing: x.missing, noBox: x.noBox, design: Boolean(x.design) })),
+    },
+  };
 }
 
 // Gộp bug, 2 bước. Bug gộp lấy Severity cao nhất (kèm lý do) và Priority TC cao nhất; Priority tính sau khi gộp.
@@ -148,12 +340,26 @@ function dedupe(rows, nextId) {
   for (const r of rows) {
     r.mine = [];
     for (const b of r.built) {
-      const key = b.step == null ? `flow|${b.short}` : `${b.feature}|${b.screen}|${b.label}`;
+      // Màn khác test case ở nhiều điểm (nhóm nội dung) → 1 bug cho màn đó dù gặp ở nhiều test (vd Paywall chưa theo design)
+      const key = b.step == null ? `flow|${b.short}` : b.contentGroup ? `content|${b.feature}|${b.screen}` : `${b.feature}|${b.screen}|${b.label}`;
       let g = groups.get(key);
       if (!g) {
-        g = { ...b, tests: [], screens: [{ screen: b.screen, image: b.image, found: b.found, missing: b.missing, noBox: b.noBox }] };
+        g = { ...b, tests: [], screens: [{ screen: b.screen, image: b.image, found: b.found, missing: b.missing, noBox: b.noBox, design: Boolean(b.design) }, ...(b.extraShots || [])] };
         groups.set(key, g);
-      } else raise(g, b);
+      } else {
+        raise(g, b);
+        if (b.contentGroup && !g.tests.includes(r.key)) {
+          // Ghép các điểm lệch của test mới (không lặp câu), đủ ảnh; tiêu đề không còn "khi …" của riêng 1 test
+          const joinSentences = (a, x) => uniqArr([...a.split(/(?<=\.)\s+/), ...x.split(/(?<=\.)\s+/)]).join(' ');
+          g.actual = joinSentences(noWhen(g.actual), noWhen(b.actual));
+          g.expectedShort = joinSentences(g.expectedShort, b.expectedShort);
+          g.labels = uniqArr([...(g.labels || [g.label]), ...(b.labels || [b.label])]);
+          if (g.facts) g.facts = { ...g.facts, checks: [...(g.facts.checks || []), ...(b.facts?.checks || [])] };
+          g.screens.push({ screen: b.screen, image: b.image, found: b.found, missing: b.missing, noBox: b.noBox, design: Boolean(b.design) }, ...(b.extraShots || []));
+          g.short = `Màn ${g.screen} khác test case ở ${g.actual.split(/(?<=\.)\s+/).length} điểm`;
+          g.title = `[BUG][${g.screen}] ${g.short}`;
+        }
+      }
       if (!g.tests.includes(r.key)) g.tests.push(r.key);
       if (!r.mine.includes(g)) r.mine.push(g);
     }
@@ -192,12 +398,12 @@ function dedupe(rows, nextId) {
   for (const b of all) {
     const ids = b.tests.map((t) => tcOf[t]);
     const p = prioritize({
-      severity: b.severity, tcPriority: b.tcPriority, testCount: b.tests.length, screenCount: b.screens.length,
+      severity: b.severity, tcPriority: b.tcPriority, testCount: b.tests.length, screenCount: areasOf(b).length,
       blocksAfter: blockedBy.filter((id) => ids.includes(id)).length,
     });
     Object.assign(b, p, { unverified: uniqArr([...b.unverified, ...p.unverified]) });
     b.id = nextId();
-    if (b.screens.length > 1) b.title = `[BUG][${b.feature}] ${b.short}`;
+    if (areasOf(b).length > 1) b.title = `[BUG][${b.feature}] ${b.short}`;
     b.text = bugText(b);
   }
   return all;
@@ -218,18 +424,21 @@ const PCODE = { 'Very High': 'P0', High: 'P1', Normal: 'P2', Low: 'P3' };
 
 function bugCard(b, share) {
   const list = (lines) => `<ol class="lines">${lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ol>`;
-  const caption = (x) => (x.noBox
+  const caption = (x) => (x.design
+    ? `Màn ${x.screen} — trái: Figma, phải: app; chỗ lệch khoanh đỏ${x.missing ? ' (nét đứt: chỗ lẽ ra phải có)' : ''}`
+    : x.noBox
     ? 'Màn hình lúc test fail'
     : x.found ? `Màn ${x.screen} — phần lỗi khoanh đỏ`
       : x.missing ? `Màn ${x.screen} — không có phần tử cần kiểm; khung đỏ nét đứt là chỗ lẽ ra phải hiện`
         : `Màn ${x.screen} — không tìm thấy phần tử cần kiểm trên màn hình`);
-  const areas = b.screens.length > 1;
+  const areas = areasOf(b).length > 1;
   const shots = b.screens.filter((x) => x.image);
   // Dữ liệu để form Asana dựng html_notes (đơn lẻ hoặc gộp nhiều bug UI cùng màn) và để dashboard đọc
   const data = {
     id: b.id, title: b.title, short: b.short, feature: b.feature, screen: b.screen, label: b.label, type: b.type,
     priority: b.priority, severity: b.severity, pre: b.pre, steps: b.stepsClean,
-    actual: b.actual, expected: b.expectedShort, screens: b.screens.map((x) => x.screen),
+    actual: b.actual, expected: b.expectedShort, screens: areasOf(b),
+    facts: b.facts || null,
   };
   // Lỗi trên nhiều màn: ảnh của từng màn, bấm ảnh nhỏ để đổi
   const evidence = shots.length ? `
@@ -295,12 +504,12 @@ function stepsView(r) {
         ? esc(s.label)
         : s.kind === 'Nav' ? `Tới màn <b>${esc(s.screen || s.target)}</b>`
           : `${esc(s.keyword)}${s.target ? ` "${esc(s.target)}"` : ''}${s.value ? ` = ${esc(s.value)}` : ''}`;
-      const bug = s.kind === 'Check' && !s.ok ? r.mine.find((b) => b.label === s.label) : null;
+      const bug = s.kind === 'Check' && !s.ok ? r.mine.find((b) => (b.labels || [b.label]).includes(s.label)) : null;
       const res = s.ok
         ? `<span class="sok">${s.kind === 'Check' ? '✓' : '•'}</span>`
         : s.kind === 'Check'
           ? `<span class="sfail">✗</span> <span class="muted">app ${esc(val(s.actual))} · mong đợi ${esc(val(s.expected))}</span> ${bugLink(bug)}`
-          : `<span class="sfail">⛔ Dừng</span> <span class="muted">${esc(String(s.error || '').split('\n')[0])}</span> ${bugLink(r.mine.find((b) => b.step == null))}`;
+          : `<span class="sfail">⛔ Dừng</span> <span class="muted">${esc(String(s.error || '').split('\n')[0])}</span> ${bugLink(r.mine.find((b) => b.step == null || b.stopLink))}`;
       return `<tr class="k-${s.kind.toLowerCase()}${s.ok ? '' : ' bad'}"><td class="sn">${s.step ?? ''}</td><td>${what}</td><td>${res}</td></tr>`;
     }).join('');
     if (r.status === 'blocked') body += `<tr><td></td><td colspan="2" class="muted">Các bước sau không chạy</td></tr>`;
@@ -431,8 +640,8 @@ ${share ? '' : `<div class="selbar" id="selbar"><span id="sel-n"></span><button 
   <input type="text" id="f-title">
   <label>Priority <small>— tự chọn theo mức ảnh hưởng, sửa được; set vào field Priority của project</small></label>
   <select id="f-priority">${opts(RANK.slice().reverse())}</select>
-  <label>Nội dung sẽ log <small>— review trước khi tạo</small></label>
-  <div class="preview" id="f-preview"></div>
+  <label>Nội dung sẽ log <small>— review và sửa trước khi tạo; chỉ đổi nội dung trên Asana, không đổi report</small></label>
+  <div id="f-edit"></div>
   </div>
   <label>Assignee <small>— email, để trống nếu chưa giao</small></label>
   <input type="email" id="f-assignee" placeholder="ten@ikameglobal.com">

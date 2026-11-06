@@ -25,7 +25,7 @@ test('case cài lại app chạy một mình', () => {
 test('case phía trước chưa gen → missing kèm lý do', () => {
   const cases = CASES.map((c) => (c.tcId === 'TC_WEL_001' ? { ...c, script: { status: 'none' } } : c));
   const r = closure(cases, ['a:f:TC_LOGIN_001']);
-  assert.deepEqual(r.missing, [{ id: 'a:f:TC_WEL_001', tcId: 'TC_WEL_001', reason: 'Chưa có script' }]);
+  assert.deepEqual(r.missing, [{ id: 'a:f:TC_WEL_001', tcId: 'TC_WEL_001', reason: 'Chưa có script', needsScript: true }]);
 });
 
 test('case được chọn gen lỗi / stale cũng vào missing', () => {
@@ -36,4 +36,13 @@ test('case được chọn gen lỗi / stale cũng vào missing', () => {
 test('prev trỏ tới case không có trong file → missing', () => {
   const cases = [mk('TC_X', 0, false, 'TC_KHONG_CO')];
   assert.match(closure(cases, ['a:f:TC_X']).missing[0].reason, /TC_KHONG_CO/);
+});
+
+test('thiếu case phía trước → needsScript false (gen lại không gỡ được); kèm thiếu script thì true', () => {
+  const ok = closure([mk('TC_X', 0, false, 'TC_KHONG_CO')], ['a:f:TC_X']).missing[0];
+  assert.equal(ok.needsScript, false);
+  const both = closure([mk('TC_X', 0, false, 'TC_KHONG_CO', 'none')], ['a:f:TC_X']).missing[0];
+  assert.equal(both.needsScript, true);
+  assert.match(both.reason, /TC_KHONG_CO.*Chưa có script/);
+  assert.equal(closure([mk('TC_Y', 0, true, null, 'generating')], ['a:f:TC_Y']).missing[0].needsScript, false);
 });

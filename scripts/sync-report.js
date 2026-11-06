@@ -6,16 +6,18 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { TEST_REPORT_SKILL_SRC, TEST_REPORT_VENDOR, WORKSPACES } from '../server/paths.js';
 
-const files = (dir, base = dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+const files = (dir, base = dir, ignore = []) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+  if (ignore.includes(e.name)) return [];
   const p = path.join(dir, e.name);
-  return e.isDirectory() ? files(p, base) : [path.relative(base, p)];
+  return e.isDirectory() ? files(p, base, ignore) : [path.relative(base, p)];
 }).filter((f) => !f.endsWith('.DS_Store')).sort();
 
 // Hai thư mục giống hệt nhau (cùng danh sách file, cùng nội dung)
-export function sameTree(a, b) {
+// ignore: tên file / thư mục bỏ qua ở mọi cấp (vd node_modules)
+export function sameTree(a, b, { ignore = [] } = {}) {
   if (!fs.existsSync(a) || !fs.existsSync(b)) return false;
-  const fa = files(a);
-  const fb = files(b);
+  const fa = files(a, a, ignore);
+  const fb = files(b, b, ignore);
   return fa.length === fb.length && fa.every((f, i) => f === fb[i] && fs.readFileSync(path.join(a, f)).equals(fs.readFileSync(path.join(b, f))));
 }
 

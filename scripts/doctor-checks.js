@@ -24,6 +24,9 @@ export async function runChecks(p) {
   const sync = await safe(p.reportSync);
   if (sync === 'diff') add('Chung', 'report-sync', 'Report trong tool khớp skill gốc (../.claude/skills/test-report)', 'warn', 'đang khác', 'Chạy: npm run sync-report (rồi Cài đặt app → Chuẩn bị lại cho từng app)');
   else if (sync === 'same') add('Chung', 'report-sync', 'Report trong tool khớp skill gốc (../.claude/skills/test-report)', 'ok');
+  const selSync = await safe(p.selectSkillSync);
+  if (selSync === 'diff') add('Chung', 'select-skill-sync', 'Skill chọn case automation trong tool khớp bản gốc (../.claude/skills/select-automation-testcases)', 'warn', 'đang khác', 'Chạy: npm run sync-select-skill');
+  else if (selSync === 'same') add('Chung', 'select-skill-sync', 'Skill chọn case automation trong tool khớp bản gốc (../.claude/skills/select-automation-testcases)', 'ok');
   const ikf = await safe(p.ikFitness);
   add('Chung', 'ik-fitness', 'Helper pack IK Fitness (../ik-fitness, tuỳ chọn)', ikf ? 'ok' : 'warn', ikf ? '' : 'không có — app khác vẫn chạy bình thường', 'Chỉ cần khi test app IK Fitness: đặt project ik-fitness cạnh thư mục tool');
 

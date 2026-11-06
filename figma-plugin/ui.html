@@ -1,0 +1,52 @@
+<style>
+  body { font: 12px/1.45 Inter, -apple-system, system-ui, sans-serif; margin: 0; padding: 14px; color: #1e1e1e; }
+  h1 { font-size: 13px; margin: 0 0 6px; }
+  p { margin: 0 0 10px; color: #555; }
+  ul { margin: 0 0 10px; padding-left: 18px; max-height: 110px; overflow: auto; }
+  .row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+  select, button { font: inherit; }
+  button { background: #0d99ff; color: #fff; border: 0; border-radius: 6px; padding: 8px 12px; cursor: pointer; width: 100%; }
+  button:disabled { background: #b3b3b3; cursor: default; }
+  .msg { margin-top: 8px; min-height: 18px; }
+  .err { color: #c4231c; }
+</style>
+<h1>Xuất frame cho QA Pipeline</h1>
+<p>Chọn các frame (màn) cần so. Đặt tên frame giống tên màn trong Locator map để tool tự gắn.</p>
+<ul id="list"></ul>
+<div class="row">
+  <label for="scale">Độ nét ảnh</label>
+  <select id="scale"><option value="3" selected>3x (iOS @3x)</option><option value="2">2x</option><option value="4">4x</option></select>
+</div>
+<button id="go" disabled>Xuất file .json</button>
+<div class="msg" id="msg"></div>
+<script>
+  const list = document.getElementById('list');
+  const go = document.getElementById('go');
+  const msg = document.getElementById('msg');
+  const say = (text, err) => { msg.textContent = text; msg.className = err ? 'msg err' : 'msg'; };
+  go.onclick = () => parent.postMessage({ pluginMessage: { type: 'export', scale: Number(document.getElementById('scale').value) } }, '*');
+  onmessage = (e) => {
+    const m = e.data.pluginMessage;
+    if (!m) return;
+    if (m.type === 'selection') {
+      list.innerHTML = '';
+      for (const n of m.names) { const li = document.createElement('li'); li.textContent = n; list.appendChild(li); }
+      go.disabled = !m.names.length;
+      go.textContent = m.names.length ? `Xuất ${m.names.length} frame ra file .json` : 'Chọn frame trước';
+      say('');
+    } else if (m.type === 'busy') {
+      go.disabled = true; say(m.text);
+    } else if (m.type === 'error') {
+      go.disabled = false; say(m.text, true);
+    } else if (m.type === 'done') {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([m.json], { type: 'application/json' }));
+      a.download = m.name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      go.disabled = false;
+      say(`Đã lưu ${m.name}. Mở QA Pipeline → AI Smoke Test → chọn file .json này.`);
+    }
+  };
+</script>

@@ -50,6 +50,8 @@ Pass rate = Passed / (Passed + Failed + Blocked).
 | Failed without a check (plain assert) | Function | Major |
 | Error message missing (`Invalid…`, `…must…`, `…does not match`…) | Function | Major — validation does not work (rule 4) |
 | Element missing that some test case taps (link / button) | Function | Critical on a main flow, else Major; other route unverified (rule 4) |
+| App not on the expected screen after an action (failed "đúng màn" check: label Tiêu đề / Tới / Sang / Mở lại…, or the check right after a Nav) | Function | Major — wrong flow |
+| A whole sheet / screen / popup / dialog the flow must show is missing (check label names it) | Function | Major |
 | Other element missing / still shown when it should hide | UI | Minor; whether it blocks an action is unverified |
 | Button enabled with invalid data (`Verify disabled`) | Function | Major |
 | Button disabled with valid data (`Verify enabled`) | Function | Critical on a main flow, else Major; workaround unverified |
@@ -58,6 +60,7 @@ Pass rate = Passed / (Passed + Failed + Blocked).
 | Wrong number / content vs data or formula | Function | Major |
 | Same value, different format; empty value | UI | Minor |
 | Text or unit differs only in wording (cal vs kcal) | UI | Trivial |
+| Screen differs from Figma (`Verify design <group>`, written by the QA Pipeline design check) | UI | From the measured gap: missing text / icon / image, wrong text, a gap > 3× tolerance, colour ΔE > 25, size > 20 %, font > 25 % → Minor; smaller gaps → Trivial |
 
 **Priority** (`prioritize`), after dedupe, from Severity × Priority of the test case, then scope:
 
@@ -75,8 +78,22 @@ Pass rate = Passed / (Passed + Failed + Blocked).
 
 **Shown on each bug:** Severity + reason, Priority + reason (e.g. `Severity Major · TC High · gặp ở 3 TC`), and "Chưa xác minh" when something could not be checked. "Copy bug" includes the same lines.
 
-## Dedupe (`dedupe` in html.js)
+## Dedupe (`mergeChecks`, `dedupe` in html.js)
 
+Inside one test (`mergeChecks`) — one real bug = one card, the way a tester logs it:
+
+- **Wrong screen:** a failed "đúng màn" check (see Severity table) absorbs every other failed check made after the **same user action** — they are consequences (kill app → reopens on Welcome: title missing + "Get Started" still shown = 1 bug).
+- **Screen differs from the test case in several content points:** failed content checks (`Verify text / displayed / selected / value / placeholder / count / order / attribute`) of **at least two kinds**, on the same screen, after the same user action → 1 bug titled `Màn S khác test case ở N điểm <khi …>` (e.g. a Paywall not built to the design yet). Actual lists each point once, without its own `khi …`.
+- **Same kind of check on the same screen:** several failed checks with the same keyword on one screen → 1 bug (2 options both stay selected; 2 options both show the wrong number of logos).
+- Never put into the content group: an extra element (`Verify not displayed`), layout (`Verify layout`), enabled / disabled. So CTA copy wrong and an extra Back button on the same screen = 2 bugs.
+- Merged bug: title from the first check, Actual / Expected join every check's sentence, Steps = the longest, one screenshot per check, highest Severity. Each failed check row in the test links to the merged bug.
+
+- **Blocked test with failed checks on the screen where it stopped** (`tellStory`): the failed checks and the blocking error are one bug, told in order — `Sau khi nhấn "Continue": màn Tutorial Website hiển thị "Smart social media imports" thay vì "One-tap blog imports". … Sau khi nhấn "Tap here": màn không hiển thị "Step 2 of 4"; app hiển thị màn "Recipe imported successfully!"…`. Title = the first wrong point. Failed checks on other screens stay separate bugs. The "⛔ Dừng" row of the test links to this bug.
+- Text check whose target is the expected text itself (a title, a line of copy): `Màn S hiển thị "a" thay vì "e"`.
+
+Across tests:
+
+0. "Màn S khác test case" bugs of the same screen from several tests → one bug; points joined without repeats, title counts the distinct points, one screenshot per test.
 1. Same screen + same check label across tests or data sets → **one representative bug** (first occurrence). The report does not show the occurrence count and does not list the runs.
 2. Same label + same actual + same expected on **several screens** → one bug. **Affected Area** = those screens, with one screenshot per screen.
 3. **Same missing element** → one bug: a check "X must be shown" that fails and a test blocked because X could not be found to act on (e.g. `Không thấy "Already a member? Log In"`). The bug from the check is the representative (it has the screen and clear steps); the blocked tests are added to its test list and their blocking counts toward Priority.
@@ -85,77 +102,101 @@ Bug IDs (BUG-001…) are sequential within a report.
 
 ## Bug fields
 
-Wording lives in `assets/src/report/phrasing.js`; `buildBugs` in `html.js` assembles the fields. Write for a dev who never saw the test case: plain Vietnamese sentences, concrete values, only what was observed.
+Two writers, same fields (Title, Precondition, Steps to Reproduce, Actual, Expected):
+- **AI (preferred).** Report opened through QA Pipeline (`/files/data/runs/<RUN>/…`): the Log Asana form sends each picked bug — the template draft plus its raw `facts` — to `POST /api/bug-text`. The tool gives Claude the section "Cách viết bug" below and fills the form; the tester reviews before creating.
+- **Templates (fallback).** Report opened as a file, or the AI call failed: the wording `phrasing.js` builds (shown in the report itself). It follows the same rules as far as fixed sentences can; it is not the target style.
 
-| Field | Rule | Example |
-|---|---|---|
-| **Title** | `[BUG][<Feature> - <Màn>] <hành vi sai>`: one short sentence saying what is wrong **and when** (see `<khi …>` below), not "A thay vì B (mong đợi …)". Drop `- <Màn>` when the screen is unknown or the bug spans several screens. | `[BUG][Authentication - Log In] Nút "Continue with email" vẫn enable khi nhập Email "Yolina@"` |
-| **Feature** | `case.feature` (the test case file / module), else the first word of the suite. | `Authentication` |
-| **Màn** | Check bugs: the screen of the check. Flow bugs: the screen the user was on when the step failed, never the screen that did not open. | `Create account` |
-| **Affected Area** | Only when the same error shows on more than one screen: list every screen. | `- Log In`<br>`- Create account` |
-| **Precondition** | Real conditions only: starting screen, accounts / data that must exist, fresh install, then the device line (`Thiết bị: … · iOS … · App … · locale …`). "Tiếp nối TC_x" becomes `Đang ở màn <màn bắt đầu>`. "Ghi chú bước N" lines are dropped. Action lines (`Tap "X"`, `Launch fresh`) move to the top of Steps. | `1. Đang ở màn Log In`<br>`2. Tài khoản qa.plan… đã xong onboarding` |
-| **Steps to Reproduce** | Numbered, one action per line, in the order really run (step log), up to the failing point. Check bugs end with `Quan sát …`. Flow bugs end with the action that failed. | `1. Nhập Email: "Yolina@"`<br>`2. Nhập Password: "Yolina123"`<br>`3. Quan sát nút "Continue with email"` |
-| **Actual Result** | 1 sentence: what the app showed, with the values typed. No cause, no analysis. | `Nút "Continue with email" vẫn enable, nhấn được khi nhập Email "Yolina@".` |
-| **Expected Result** | 1 sentence: the correct behaviour from the test case / spec. No file paths. | `Nút "Continue with email" bị disable, không nhấn được.` |
-| **Attachment** | Screenshot with the failing element boxed in red. Element missing ("không hiển thị"): dashed red box where it should appear (under the anchor passed to `snapshot`), and the text found there is added to Actual: `…; chỗ đó hiện "That username is already taken."`. Flow bugs: screenshot at failure, no box. | |
-| **Priority / Severity / Loại** | From the impact table above. Set as fields (Asana custom field Priority), never written inside the content. | `High · Major · Function` |
+Data rules (both writers):
+- **Màn**: screen name from the test case (Screen column, `case.rows`), else the screen the script logged. Flow bugs: the screen the user was on when the step failed, never the screen that did not open.
+- **Feature**: `case.feature`, else the first word of the suite.
+- **Affected Area**: only when the same error shows on more than one screen.
+- **`facts`** (`buildBugs` in html.js): TC id / title / feature, screen, failed checks with raw actual / expected, blocking error, test case Expected, and `seen` (screen summary: title, main text, buttons). A failed check reads its own `seen` the moment it fails (`addBug` in collector.js reads the page source without waiting; `screenSummary` waits for it), because a soft-assert test runs on and the screen at the end is another one. `kind` = `bottom sheet` / `popup` when every named element sits below 15% of the screen height (the dimmed screen behind is not in the page source) or an alert is shown. Template text: a check whose element is missing gets Actual `Màn đang hiện "T" bottom sheet (nút "A", "B").` (the missing element is already in the Title).
+- **Attachment**: screenshot with the failing element boxed in red; element missing → dashed box under the anchor passed to `snapshot`; flow bugs → screenshot at failure, no box.
+- **Priority / Severity / Loại**: from the impact table above, set as fields (Asana custom field Priority), never written in the content.
 
-### Action wording (Steps)
+### Cách viết bug
 
-| Keyword | Sentence |
-|---|---|
-| `Launch fresh` | Mở app (bản cài mới) |
-| `Relaunch app` | Tắt hẳn app rồi mở lại |
-| `Tap "X"` / `Back` | Nhấn "X" / Nhấn Back |
-| `Enter "F" = v` | Nhập F: "v" (empty v → Xoá hết ô F) |
-| `Clear "F"` | Xoá hết ô F |
-| `Set ruler "H" = v` | Kéo thước H tới v |
-| `Select date "B" = v` | Chọn B: v |
-| `Hide keyboard` / `Swipe` / `Scroll to "X"` | Ẩn bàn phím / Vuốt <hướng> / Cuộn tới "X" |
+Bạn viết bug cho dev đọc. Dev chưa từng thấy test case hay script. Viết tiếng Việt, câu ngắn, rõ, giọng tester chuyên nghiệp. Giữ nguyên tiếng Anh cho chữ trên app, tên màn, thuật ngữ test (Precondition, Steps…).
 
-### Check wording (Title · Actual · Expected)
+#### Dữ liệu bạn nhận
+Mỗi bug có:
+- `draft`: bản nháp do máy ghép theo mẫu câu (Title, Precondition, Steps, Actual, Expected). Dùng làm nguồn dữ kiện, **không** chép lại cách hành văn của nó.
+- `facts`: dữ kiện gốc
+  - `tc`: TC ID, tiêu đề TC (cho biết mục đích kiểm), feature.
+  - `screen`: màn xảy ra lỗi (theo test case).
+  - `checks`: các điểm kiểm bị lệch: `label` (tester đặt), `keyword` (Verify text / displayed / not displayed / enabled / selected…), `target` (phần tử), `actual` (app thực tế: `null` = không tìm thấy phần tử, `true/false` = có / không), `expected`.
+  - `error`: lỗi chặn luồng (nếu test bị Blocked).
+  - `seen`: màn app đang hiện đúng lúc lỗi: `title` (chữ đầu màn), `text`, `buttons`, `kind` (`bottom sheet` / `popup` đang che màn, `null` = màn thường). Dùng để nói **cái gì hiện ra thay vào**. `seen` = `null` nghĩa là không biết màn lúc đó — khi ấy **không** nói gì về phần tử khác đang hiện trên màn.
+  - `tcExpected`: dòng Expected Result trong test case.
 
-Every check bug says **when** it happens, so a dev understands it from the title alone. `<khi …>` (`whenText` in phrasing.js) is built from the steps run before the check:
+Chỉ viết điều có trong dữ liệu. Không bịa giá trị, không đoán nguyên nhân.
 
-- the last action, if it is not typing: `khi nhấn "Create account"`, `khi tắt hẳn app rồi mở lại`;
-- plus the value currently in each field (last value typed): `với Password "Abc1234" (7 ký tự)`. With no action before it: `khi nhập Email "Yolina@"`;
-- only the fields named in the check (an error about "Password" → only the Password field). If no field is named, list them all;
-- password fields also show their length: `(7 ký tự)`;
-- nothing done yet on the screen: `khi vừa vào màn S`.
+#### Từng field
 
-Title and Actual carry `<khi …>`. Expected does not repeat it.
+##### Title
+**Mục đích:** dev đọc riêng Title cũng hiểu lỗi gì, ở đâu.
+- Dạng: `[BUG][<Khu vực>] <Hiện tượng sai>`, thêm `khi <điều kiện>` nếu điều kiện đó **gây ra** lỗi.
+- **Khu vực:** tên màn nếu lỗi nằm trong nội dung một màn (thiếu / sai chữ, nút, trạng thái trên màn đó). Tên feature (vd `Onboarding`, `Paywall`) nếu lỗi về luồng: chuyển sai màn, mở lại không đúng chỗ, trạng thái không giữ qua nhiều màn. Feature lấy từ `facts.tc.feature` dạng dễ đọc (`onboarding-v1-0-4-automation` → `Onboarding`).
+- **Hiện tượng:** điều người dùng thấy sai, bằng lời người dùng. Gọi đúng loại phần tử: nút, link, text, màn, popup, sheet. Lỗi luồng thì viết theo mục đích của TC (tiêu đề TC "Verify kill app … thì mở lại đúng màn đang dở" → "Không mở lại đúng màn đang dở khi kill app giữa luồng").
+- Không lặp điều kiện ban đầu ("khi mở app (bản cài mới)", "khi vừa vào màn X") — đã có ở Precondition.
+- Không dùng label điểm kiểm, keyword của script, mã điểm kiểm (D12, Q&A #3…).
+- Không dùng "vẫn", "không còn" (ngụ ý trước đây đúng) trừ khi dữ liệu cho thấy là lỗi hồi quy.
+- Ngắn, khoảng 15 từ.
 
-| Keyword failing | Title | Actual | Expected |
-|---|---|---|---|
-| `Verify disabled "X"` | Nút "X" vẫn enable `<khi …>` | Nút "X" vẫn enable, nhấn được `<khi …>`. | Nút "X" bị disable, không nhấn được. |
-| `Verify enabled "X"` | Nút "X" bị disable `<khi …>` | Nút "X" bị disable, không nhấn được `<khi …>`. | Nút "X" enable, nhấn được. |
-| `Verify displayed "X"` / `Verify text` | Không hiển thị "X" `<khi …>` | Màn S không hiển thị "X" `<khi …>`. | Màn S hiển thị "X". |
-| `Verify not displayed "X"` | "X" vẫn hiển thị `<khi …>` | "X" vẫn hiển thị trên màn S `<khi …>`. | "X" không còn hiển thị. |
-| `Verify value "F" = e` | F hiển thị "a" thay vì "e" `<khi …>` | F hiển thị "a" `<khi …>`. | F hiển thị "e". |
-| `Verify value` masked (`***`) | Ô F hiện rõ mật khẩu thay vì ẩn `<khi …>` | Ô F hiện rõ "a" `<khi …>`. | Ô F ẩn ký tự (hiện dấu chấm). |
-| `Verify selected "X"` | "X" không được chọn `<khi …>` | "X" có giá trị "a" `<khi …>`. | "X" được chọn ("e"). |
-| element missing (any) | Không thấy "X" `<khi …>` | Màn S không có "X" `<khi …>`. | Màn S có "X". |
-| no keyword (custom spec) | `<label>` hiển thị "a" thay vì "e" / `<label>` không hiển thị, + `<khi …>` | | |
+Đúng: `[BUG][Welcome] Tồn tại link "Already have an account? Log in"`
+Sai: `[BUG][Welcome] "Already have an account? Log in" vẫn hiển thị khi mở app (bản cài mới)`
 
-Examples:
+Đúng: `[BUG][Onboarding] Không mở lại đúng màn onboarding đang dở khi kill app giữa luồng`
+Sai: `[BUG][Encouragement] Không hiển thị "You're in the right place" khi tắt hẳn app rồi mở lại`
 
-- `[BUG][Authentication - Create account] Không hiển thị "Password must be at least 8 characters" khi nhấn "Create account" với Password "Abc1234" (7 ký tự)`
-- `[BUG][Authentication - Log In] Nút "Continue with email" vẫn enable khi nhập Email "Yolina@"`
+##### Precondition
+**Mục đích:** trạng thái trước khi bắt đầu.
+- Mỗi dòng 1 ý: cài mới / đã cài, tài khoản, dữ liệu cần có, màn bắt đầu.
+- Dòng cuối: dòng thiết bị trong `draft` (giữ nguyên).
+- Không chứa thao tác — thao tác thuộc Steps.
 
-### Flow bugs (Blocked, no check failed)
+##### Steps to Reproduce
+**Mục đích:** dev làm theo là gặp lỗi.
+- Mỗi dòng 1 hành động, bắt đầu bằng động từ, đúng thứ tự trong `draft`. Không thêm, không bỏ thao tác.
+- Thao tác gây lỗi ghi kèm màn đang đứng: `Ở màn Encouragement, tắt hẳn app rồi mở lại`.
+- Bước cuối nói rõ quan sát gì: `Quan sát màn hiện tại` (lỗi luồng / sai màn) hoặc `Quan sát nút "X"` (lỗi trên màn).
+- Không đánh số (hệ thống tự đánh).
 
-| Cause | Title | Actual | Expected |
-|---|---|---|---|
-| Screen did not open (`Không tới được màn S: không thấy "Y" sau Ns`) | Không chuyển sang màn S sau khi `<thao tác cuối>` | Sau khi `<thao tác cuối>`, app không chuyển sang màn S (chờ Ns không thấy "Y"). | App chuyển sang màn S. |
-| Element to act on missing | Không thấy "X" | Sau khi `<thao tác cuối>`, màn S không có "X". | Màn S có "X". |
-| Other error | first line of the error | same | Các bước của test case chạy hết, không lỗi. |
+##### Actual Result
+**Mục đích:** mô tả đúng điều đã thấy.
+- 1–2 câu. Nếu biết (từ `seen`) thì nêu cái hiện ra thay vào: màn khác, chữ khác.
+- Nhiều điểm kiểm cùng một triệu chứng → **một** ý. Vd: "chữ tiêu đề màn A không có" + "nút của màn Welcome vẫn có" = app đang ở màn Welcome, không phải màn A.
+- Chữ là tiêu đề nhận diện một màn → nói về màn ("Không hiển thị màn Encouragement"), không nói về chữ.
+- Không đoán nguyên nhân, không phân tích.
+
+##### Expected Result
+**Mục đích:** hành vi đúng theo test case / PRD.
+- Cùng chủ ngữ, cùng cách nói với Actual để dev đối chiếu: Actual `Không hiển thị màn Encouragement khi tắt hẳn app rồi mở lại.` → Expected `Hiển thị màn Encouragement khi tắt hẳn app rồi mở lại.`
+- Không ghi "(theo test case)", không ghi đường dẫn file.
+
+#### Trả về
+Với mỗi bug: `id` (giữ nguyên), `title`, `pre` (mảng dòng), `steps` (mảng dòng), `actual`, `expected`.
+
+### Design checks (UI theo Figma)
+
+The QA Pipeline compares each screen that has a Figma frame with the app and writes one result per screen (suite `UI theo Figma`, case `UI-<screen>`, no xlsx write-back). Each gap is a check with keyword `Verify design text | layout | font | color | image` and a `design` object `{ short, actual, expected, severity, reason, kind }` already worded with measured values (`"Cook better" lệch 10pt sang phải so với Figma`, `Màu chữ "Price" là #DC1E1E, Figma #787878`). The report uses those sentences as they are.
+
+- Gaps of one group on one screen → 1 bug (`mergeChecks` "same kind of check on the same screen"), titled `Màn S có N chỗ sai màu so với Figma` (wording in `DESIGN_GROUP`, html.js). One group = one bug, so a dev fixes colour and spacing separately.
+- Attachment: Figma on the left, app on the right, the gap boxed in red on both (dashed on the app side when the element is missing).
+- Screen with a Figma link not reached in the run → Not Run. Figma not readable (no token, wrong link) → Blocked, environment, no bug.
+
+### Flow bugs (Blocked)
+
+A Blocked test gets a flow bug **even when it also has failed checks** (each failed check stays its own bug).
+Manual fix mode: a blocking step the tester let pass (Skip / Use element) is recorded with `addFlowBug({ step, screen, target, error, seen, shot })` and becomes the same kind of flow bug (Steps stop before it, Actual from `seen`); the case runs on and ends **Failed**. Fix script (script was wrong) records nothing. Actual says what the app really showed: `afterTest` passes `screenSummary()` (title, main text, buttons read from the page source at failure) to `writeResult`, and the screenshot at failure is always kept.
 
 ### Asana
 
 - One subtask under a parent task, sent as `html_notes`: allowed tags only, no `<p>`, `\n` for line breaks.
 - Priority goes into the project's "Priority" custom field (option "Very High"). If that fails, the form says to set it by hand.
-- The form has a review step before creating.
-- UI bugs on the same screen can be merged into one subtask (toggle in the form). Title: `[BUG][<Feature> - <Màn>] <n> lỗi UI: <title 1>; <title 2>`.
+- The form has a review step before creating. Title, Precondition, Steps (one line = one item), Actual and Expected are editable there, per subtask; edits only change what goes to Asana, not the report. Title / Steps / Actual / Expected cannot be empty.
+- Opened through QA Pipeline, the form first asks the AI to rewrite the picked bugs (see "Bug fields" → "Cách viết bug"); "Create" stays disabled until it answers (max 150 s). Text the tester already edited is kept; "Khôi phục nội dung gốc" restores the AI version. Merged UI subtasks keep the template text.
+- UI bugs on the same screen can be merged into one subtask (toggle in the form). Title: `[BUG][<Màn>] <n> lỗi UI: <title 1>; <title 2>`.
 
 ## Excel (`excel.js`)
 

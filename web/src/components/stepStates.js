@@ -19,7 +19,12 @@ export function stepStates(rows = [], live = [], { running, failed }) {
   for (let i = 0; i < last; i++) if (out[i].state === 'todo') out[i] = { state: 'done', implicit: true };
   const next = out.findIndex((s) => s.state === 'todo');
   if (next >= 0 && running) out[next] = { state: 'run' };
-  if (next >= 0 && failed && !running) out[next] = { state: 'stop' };
+  if (next >= 0 && failed && !running) {
+    // Dừng ở bước chờ màn ngay sau một bước bấm: bấm được nhưng app không chuyển → lỗi thuộc bước bấm
+    const prev = rows[next - 1];
+    if (rows[next].kind === 'Nav' && prev?.kind === 'Action' && ['Tap', 'Back'].includes(prev.keyword) && out[next - 1].state === 'done') out[next - 1] = { ...out[next - 1], state: 'stop' };
+    else out[next] = { state: 'stop' };
+  }
   return out;
 }
 

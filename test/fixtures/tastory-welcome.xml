@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<AppiumAUT>
+  <XCUIElementTypeApplication type="XCUIElementTypeApplication" name="Tastory" label="Tastory" enabled="true" visible="true" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="" processId="62040" bundleId="com.begamob.cooking.foodrecipes">
+    <XCUIElementTypeWindow type="XCUIElementTypeWindow" enabled="true" visible="true" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="">
+      <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="">
+        <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="">
+          <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="">
+            <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="">
+              <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="">
+                <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="">
+                  <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="0" width="402" height="874" index="0" traits="">
+                    <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Welcome to, Tastory" name="Welcome to, Tastory" label="Welcome to, Tastory" enabled="true" visible="true" accessible="true" x="136" y="85" width="130" height="109" index="0" traits="StaticText">
+                      <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Welcome to" name="Welcome to" label="Welcome to" enabled="true" visible="true" accessible="false" x="139" y="85" width="124" height="29" index="0" traits="StaticText"/>
+                      <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Tastory" name="Tastory" label="Tastory" enabled="true" visible="true" accessible="false" x="136" y="123" width="130" height="71" index="1" traits="StaticText"/>
+                    </XCUIElementTypeStaticText>
+                    <XCUIElementTypeImage type="XCUIElementTypeImage" name="imgWelcomePhone" label="imgWelcomePhone" enabled="true" visible="false" accessible="false" x="91" y="235" width="220" height="449" index="1" traits="Image"/>
+                    <XCUIElementTypeButton type="XCUIElementTypeButton" name="Get Started" label="Get Started" enabled="true" visible="true" accessible="true" x="16" y="723" width="370" height="54" index="2" traits="Button"/>
+                    <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="Already have an account?" name="Already have an account?" label="Already have an account?" enabled="true" visible="true" accessible="true" x="105" y="788" width="151" height="18" index="3" traits="StaticText"/>
+                    <XCUIElementTypeButton type="XCUIElementTypeButton" name="Log in" label="Log in" enabled="true" visible="true" accessible="true" x="260" y="788" width="37" height="18" index="4" traits="Button"/>
+                    <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" value="By continuing, you agree to our Terms of Service and Privacy Policy" name="By continuing, you agree to our Terms of Service and Privacy Policy" label="By continuing, you agree to our Terms of Service and Privacy Policy" enabled="true" visible="true" accessible="true" x="35" y="817" width="332" height="15" index="5" traits="StaticText">
+                      <XCUIElementTypeLink type="XCUIElementTypeLink" name="https://begamob.com/ofs-termofuse.html" label="Terms of Service" enabled="true" visible="true" accessible="false" x="191" y="817" width="83" height="15" index="0" traits="Link"/>
+                      <XCUIElementTypeLink type="XCUIElementTypeLink" name="https://begamob.com/bega-policy.html" label="Privacy Policy" enabled="true" visible="true" accessible="false" x="297" y="817" width="70" height="15" index="1" traits="Link"/>
+                    </XCUIElementTypeStaticText>
+                  </XCUIElementTypeOther>
+                </XCUIElementTypeOther>
+              </XCUIElementTypeOther>
+            </XCUIElementTypeOther>
+          </XCUIElementTypeOther>
+        </XCUIElementTypeOther>
+      </XCUIElementTypeOther>
+    </XCUIElementTypeWindow>
+  </XCUIElementTypeApplication>
+</AppiumAUT>

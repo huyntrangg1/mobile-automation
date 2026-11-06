@@ -1,8 +1,77 @@
 // Thao tác dùng chung: chờ phần tử bằng explicit wait, không sleep cố định.
+import fs from 'node:fs';
+import path from 'node:path';
+
+// ===== Tìm phần tử theo chữ: khớp lỏng khoảng trắng =====
+// Locator theo chữ (~text, name == "…", text("…")) chỉ đổi cách xuống dòng / thừa dấu cách (vd dev tách title 2 dòng bằng \n)
+// vẫn tìm thấy: mỗi khoảng trắng trong chữ khớp 1+ khoảng trắng bất kỳ (dấu cách, \n, tab, NBSP). Chữ khác → vẫn không khớp.
+// Chỉ nới lỏng việc TÌM; Verify text vẫn so chữ như cũ (compare.js). Chữ không có khoảng trắng → giữ nguyên locator.
+const hasSpace = (t) => /\s/.test(String(t).trim());
+export const looseRegex = (t) => `^\\s*${String(t).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').split(/\s+/).join('\\s+')}\\s*$`;
+const STR = '("(?:[^"\\\\]|\\\\.)*")'; // chuỗi JSON trong locator
+const parse = (lit) => { try { return JSON.parse(lit); } catch { return null; } };
+
+export function loose(sel) {
+  if (typeof sel !== 'string') return sel;
+  if (sel.startsWith('~')) {
+    const t = sel.slice(1);
+    if (!hasSpace(t)) return sel;
+    const r = JSON.stringify(looseRegex(t));
+    return driver.isAndroid ? `android=new UiSelector().descriptionMatches(${r})` : `-ios predicate string:name MATCHES ${r}`;
+  }
+  if (sel.startsWith('-ios predicate string:')) {
+    return sel.replace(new RegExp(`\\b(name|label)\\s*==\\s*${STR}`, 'g'), (m, attr, lit) => {
+      const t = parse(lit);
+      return t != null && hasSpace(t) ? `${attr} MATCHES ${JSON.stringify(looseRegex(t))}` : m;
+    });
+  }
+  if (sel.startsWith('android=')) {
+    return sel.replace(new RegExp(`\\.(text|description)\\(${STR}\\)`, 'g'), (m, fn, lit) => {
+      const t = parse(lit);
+      return t != null && hasSpace(t) ? `.${fn}Matches(${JSON.stringify(looseRegex(t))})` : m;
+    });
+  }
+  return sel;
+}
+
+// Chữ mà locator đang tìm (~text, name/label == "…", text/description("…")); locator khác → null
+export function selText(sel) {
+  if (typeof sel !== 'string') return null;
+  if (sel.startsWith('~')) return sel.slice(1);
+  const m = sel.match(new RegExp(`\\b(?:name|label)\\s*==\\s*${STR}`)) || sel.match(new RegExp(`\\.(?:text|description)\\(${STR}\\)`));
+  return m ? parse(m[1]) : null;
+}
+
+// ===== Locator lệch so với app (build mới đổi chữ / cách xuống dòng) =====
+// Ghi vào REPORTS_DIR/locator-drift.jsonl, mỗi locator 1 lần / worker; runner gom lại cuối run để tester cập nhật Locator map
+const drifted = new Set();
+export function noteDrift(entry) {
+  const key = `${entry.screen || ''}|${entry.locator}`;
+  if (!process.env.REPORTS_DIR || drifted.has(key)) return;
+  drifted.add(key);
+  try {
+    fs.mkdirSync(process.env.REPORTS_DIR, { recursive: true });
+    fs.appendFileSync(path.join(process.env.REPORTS_DIR, 'locator-drift.jsonl'), `${JSON.stringify({ at: Date.now(), ...entry })}\n`);
+  } catch {}
+}
+// Tìm thấy nhờ khớp lỏng: chữ thật trong app khác chữ trong locator (chỉ khác khoảng trắng) → ghi lệch
+async function checkDrift(sel, e) {
+  if (drifted.has(`|${sel}`)) return;
+  const want = selText(sel);
+  try {
+    const got = driver.isAndroid ? (await e.getAttribute('content-desc')) || (await e.getText()) : await e.getAttribute('name');
+    if (got != null && got !== want) noteDrift({ locator: sel, actual: got, how: 'khác khoảng trắng / xuống dòng' });
+    else drifted.add(`|${sel}`);
+  } catch {}
+}
+
+// $ / $$ của module này: selector đã khớp lỏng
+const $ = (sel) => globalThis.$(loose(sel));
 
 export async function el(sel, timeout = 15000) {
   const e = await $(sel);
   await e.waitForExist({ timeout });
+  if (loose(sel) !== sel) await checkDrift(sel, e);
   return e;
 }
 

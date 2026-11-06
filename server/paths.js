@@ -12,6 +12,9 @@ export const TEST_REPORT_SKILL_SRC = process.env.QAPD_SKILL || path.resolve(ROOT
 // Bản tool dùng: luôn là bản vendor trong repo, để repo chạy được một mình
 export const TEST_REPORT_VENDOR = path.join(ROOT, 'vendor/test-report');
 export const TEST_REPORT_SKILL = TEST_REPORT_VENDOR;
+// Skill chọn / chuyển test case manual → automation v2 (Import manual): luôn dùng bản vendor trong repo
+export const SELECT_AUTOMATION_SRC = process.env.QAPD_SELECT_SKILL || path.resolve(ROOT, '../.claude/skills/select-automation-testcases');
+export const SELECT_AUTOMATION_VENDOR = path.join(ROOT, 'vendor/select-automation');
 // WebDriverAgent: dùng bản build sẵn của ik-fitness nếu có, không thì build lần đầu vào .wda-build của tool
 const IK_WDA = path.join(IK_FITNESS, '.wda-build');
 export const WDA_DIR = fs.existsSync(path.join(IK_WDA, 'Build/Products')) ? IK_WDA : path.join(ROOT, '.wda-build');

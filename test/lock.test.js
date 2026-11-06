@@ -38,3 +38,14 @@ test('recover đổi job running thành interrupted và lock trống', () => {
   assert.equal(s.get('captures', 'c1').status, 'interrupted');
   assert.equal(lock.current(), null);
 });
+
+test('ready() chờ listener (vd đóng phiên thử locator) xong; listener lỗi không làm hỏng', async () => {
+  const lock = createLock();
+  let closed = false;
+  lock.onAcquire(() => new Promise((r) => setTimeout(() => { closed = true; r(); }, 20)));
+  lock.onAcquire(() => { throw new Error('x'); });
+  assert.equal(lock.acquire({ id: 'r1', kind: 'run' }).ok, true);
+  assert.equal(closed, false);
+  await lock.ready();
+  assert.equal(closed, true);
+});

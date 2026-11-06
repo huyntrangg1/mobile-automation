@@ -97,7 +97,7 @@ test('gen cho app Android: bỏ dòng Platform = iOS khi cảnh báo thiếu loc
   const rows = [{ step: 1, screen: 'Main', kind: 'Action', keyword: 'Tap', target: 'Chỉ iOS', platform: 'iOS' }, { step: 2, screen: 'Main', kind: 'Action', keyword: 'Tap', target: 'Views', platform: 'All' }];
   store.put('cases', { id: 'and:f:TC_A', appId: 'and', file: 'f', tcId: 'TC_A', order: 0, title: 'A', fresh: true, prev: null, pre: [], rows, script: { status: 'none', warnings: [] } });
   let prompt = '';
-  const gen = createGenerator({ store, map, emit: () => {}, runClaude: async (o) => { prompt = o.prompt; return { ok: true, data: { body: "async ({ tc, data, sa, fill }) => {\n  await ui.tap(L['Main']['Views']);\n}", warnings: [] } }; } });
+  const gen = createGenerator({ store, map, emit: () => {}, runClaude: async (o) => { prompt = `${o.system || ''}\n${o.prompt}`; return { ok: true, data: { body: "async ({ tc, data, sa, fill }) => {\n  await ui.tap(L['Main']['Views']);\n}", warnings: [] } }; } });
   const s = await gen.generateCase('and:f:TC_A');
   assert.equal(s.status, 'generated');
   assert.deepEqual(s.warnings, []);

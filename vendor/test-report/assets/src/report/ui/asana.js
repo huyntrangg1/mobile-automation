@@ -37,25 +37,43 @@ if($m('pick-all'))$m('pick-all').onclick=()=>{document.querySelectorAll('.bugcar
 const H=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const uniq=a=>[...new Set(a)];
 const RANK=['Low','Normal','High','Very High'];
-function noteHtml(bs,withImg){
-  const b=bs[0],li=a=>a.map(x=>'<li>'+H(x)+'</li>').join('');
+// ----- AI viết lại bug theo reference.md → "Cách viết bug" (chỉ khi report mở qua QA Pipeline: /files/data/runs/<RUN>/…) -----
+// Report mở dạng file / tool không có AI → giữ nội dung mẫu câu như cũ.
+const RUN_ID=(location.protocol.startsWith('http')&&location.pathname.match(/\/runs\/(RUN-\d+)\//)||[])[1]||null;
+const ai=new Map(); // bug id → {title, pre[], steps[], actual, expected}
+async function aiRewrite(bugs,signal){
+  const r=await fetch('/api/bug-text',{method:'POST',headers:{'Content-Type':'application/json'},signal,
+    body:JSON.stringify({runId:RUN_ID,bugs:bugs.map(b=>({id:b.id,draft:{title:b.title,pre:b.pre,steps:b.steps,actual:b.actual,expected:b.expected},facts:b.facts}))})});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(j.error||('HTTP '+r.status));
+  for(const x of j.bugs||[])ai.set(x.id,x);
+}
+// Nội dung mặc định của 1 item (sửa được trong form): bản AI nếu có (1 bug), không thì mẫu câu; gộp UI: Actual / Expected nối các bug
+const contentOf=bs=>{
+  const a=bs.length===1&&ai.get(bs[0].id);
+  if(a)return{pre:a.pre.join('\n'),steps:a.steps.join('\n'),actual:a.actual,expected:a.expected};
+  return{pre:bs[0].pre.join('\n'),steps:bs[0].steps.join('\n'),actual:uniq(bs.map(x=>x.actual)).join('\n'),expected:uniq(bs.map(x=>x.expected)).join('\n')};
+};
+const lines=s=>s.split('\n').map(x=>x.trim()).filter(Boolean);
+function noteHtml(it,withImg){
+  const c=it.c,li=a=>a.map(x=>'<li>'+H(x)+'</li>').join('');
   let h='<body>';
   // Affected Area chỉ khi lỗi xuất hiện trên nhiều màn (không liệt kê test / bộ data — log 1 bản đại diện)
-  const screens=uniq(bs.flatMap(x=>x.screens));if(screens.length>1)h+='<h2>Affected Area</h2><ul>'+li(screens)+'</ul>';
-  if(b.pre.length)h+='<h2>Precondition</h2><ol>'+li(b.pre)+'</ol>';
-  h+='<h2>Steps to Reproduce</h2><ol>'+li(b.steps)+'</ol>';
-  h+='<h2>Actual</h2>'+H(uniq(bs.map(x=>x.actual)).join('\n'));
-  h+='<h2>Expected</h2>'+H(uniq(bs.map(x=>x.expected)).join('\n'));
-  const nImg=bs.reduce((n,x)=>n+x.imgs.length,0);
+  const screens=uniq(it.bugs.flatMap(x=>x.screens));if(screens.length>1)h+='<h2>Affected Area</h2><ul>'+li(screens)+'</ul>';
+  if(lines(c.pre).length)h+='<h2>Precondition</h2><ol>'+li(lines(c.pre))+'</ol>';
+  h+='<h2>Steps to Reproduce</h2><ol>'+li(lines(c.steps))+'</ol>';
+  h+='<h2>Actual</h2>'+H(c.actual.trim());
+  h+='<h2>Expected</h2>'+H(c.expected.trim());
+  const nImg=it.imgs.length;
   if(withImg&&nImg)h+='<h2>Attachment</h2>Ảnh evidence đính kèm (phần lỗi khoanh đỏ)'+(nImg>1?' — '+nImg+' ảnh':'');
   return h+'</body>';
 }
 // 1 subtask = 1 item: 1 bug, hoặc nhiều bug UI cùng màn gộp lại; Priority item = cao nhất trong nhóm
-const one=b=>({bugs:[b],title:b.title,priority:b.priority,imgs:b.imgs});
+const one=b=>({bugs:[b],title:ai.get(b.id)?.title||b.title,priority:b.priority,imgs:b.imgs});
 function mergedUi(bs){
   if(bs.length===1)return one(bs[0]);
   const shorts=uniq(bs.map(b=>b.short));
-  const title='[BUG]['+bs[0].feature+' - '+bs[0].screen+'] '+(shorts.length===1?shorts[0]:shorts.length+' lỗi UI: '+shorts.join('; '));
+  const title='[BUG]['+(bs[0].screen||bs[0].feature)+'] '+(shorts.length===1?shorts[0]:shorts.length+' lỗi UI: '+shorts.join('; '));
   const imgs=[],seen=new Set();for(const b of bs)for(const img of b.imgs)if(!seen.has(img.src)){seen.add(img.src);imgs.push(img)}
   const priority=RANK[Math.max(...bs.map(b=>RANK.indexOf(b.priority)))];
   return {bugs:bs,title,priority,imgs};
@@ -69,13 +87,31 @@ function itemsOf(bugs,merge){
   return slots.map(x=>x.bug?one(x.bug):mergedUi(ui.get(x.screen)));
 }
 
-// ----- Form (Bước review của skill: xem đủ nội dung, sửa Title / Priority rồi mới tạo) -----
-const modal=$m('asana-modal');let picked=[],queue=[];
+// ----- Form (Bước review của skill: xem đủ nội dung, sửa Title / Priority / nội dung rồi mới tạo) -----
+const modal=$m('asana-modal');let picked=[],queue=[],dirty=false,aiCall=null;
+// Nội dung đã sửa, theo nhóm bug — giữ lại khi bật / tắt gộp UI; chỉ dùng để log, không đổi report
+let edits=new Map();
+const withContent=it=>{const k=it.bugs.map(b=>b.id).join('+');if(!edits.has(k))edits.set(k,{title:it.title,...contentOf(it.bugs)});it.c=edits.get(k);it.title=it.c.title;return it};
+const FIELDS=[['pre','Precondition','mỗi dòng 1 ý'],['steps','Steps to Reproduce','mỗi dòng 1 bước'],['actual','Actual'],['expected','Expected']];
+function editor(it,{title}={}){
+  const box=document.createElement('div');box.className='f-edit';const areas={};
+  const fields=title?[['title','Title'],...FIELDS]:FIELDS;
+  for(const [k,name,hint] of fields){
+    const l=document.createElement('label');l.textContent=name;if(hint){const sm=document.createElement('small');sm.textContent=' — '+hint;l.append(sm)}
+    const t=document.createElement(k==='title'?'input':'textarea');if(k==='title')t.type='text';else t.rows=Math.min(8,Math.max(2,it.c[k].split('\n').length));
+    t.value=it.c[k];t.oninput=()=>{dirty=true;it.c[k]=t.value;if(k==='title'){it.title=t.value;if(it.name)it.name.textContent=t.value}};
+    areas[k]=t;box.append(l,t);
+  }
+  const r=document.createElement('button');r.type='button';r.className='linkbtn';r.textContent='Khôi phục nội dung gốc';
+  r.onclick=()=>{const o=contentOf(it.bugs);if(title)o.title=itemsOf(it.bugs,true)[0].title;for(const k in areas){it.c[k]=o[k]??it.c[k];areas[k].value=it.c[k]}if(title){it.title=it.c.title;if(it.name)it.name.textContent=it.title}};
+  box.append(r);return box;
+}
 const setStatus=(t,cls='')=>{$m('f-status').textContent=t;$m('f-status').className='status '+cls};
 const showToken=()=>{const saved=!!store.get(K_TOKEN);$m('f-token-box').style.display=saved?'none':'';$m('f-token-saved').style.display=saved?'':'none'};
 $m('f-forget').onclick=()=>{store.set(K_TOKEN,null);showToken()};
-$m('f-cancel').onclick=()=>modal.classList.remove('on');
-modal.addEventListener('click',e=>{if(e.target===modal)modal.classList.remove('on')});
+const closeForm=()=>{if(aiCall){aiCall.abort();aiCall=null}modal.classList.remove('on')};
+$m('f-cancel').onclick=closeForm;
+modal.addEventListener('click',e=>{if(e.target===modal)closeForm()});
 const attachOn=()=>$m('f-attach').checked;
 const prioSelect=it=>{const s=document.createElement('select');RANK.slice().reverse().forEach(p=>{const o=document.createElement('option');o.textContent=p;o.selected=p===it.priority;s.append(o)});s.onchange=()=>it.priority=s.value;return s};
 function renderList(){
@@ -83,21 +119,39 @@ function renderList(){
   $m('f-bulk-n').textContent='— '+picked.length+' bug → '+queue.length+' subtask';
   $m('f-list').innerHTML='';
   for(const it of queue){
-    const li=document.createElement('li');li.append(it.title);li.append(prioSelect(it));
+    withContent(it);
+    const li=document.createElement('li');it.name=document.createElement('span');it.name.textContent=it.title;li.append(it.name,prioSelect(it));
     if(it.bugs.length>1){const sm=document.createElement('small');sm.textContent=' — gộp '+it.bugs.length+' bug, '+it.imgs.length+' ảnh';li.append(sm)}
-    const d=document.createElement('details');d.innerHTML='<summary>Xem nội dung</summary><div class="preview">'+noteHtml(it.bugs,attachOn()&&it.imgs.length)+'</div>';li.append(d);
+    const d=document.createElement('details');d.innerHTML='<summary>Xem / sửa nội dung</summary>';d.append(editor(it,{title:true}));li.append(d);
     it.li=li;$m('f-list').append(li);
   }
   $m('f-submit').textContent='Tạo '+queue.length+' subtask';
 }
 $m('f-merge').onchange=renderList;
-$m('f-attach').onchange=()=>{if(picked.length>1)renderList();else $m('f-preview').innerHTML=noteHtml(queue[0].bugs,attachOn()&&queue[0].imgs.length)};
+// Dựng lại nội dung trong form (sau khi có bản AI) — chỉ khi tester chưa sửa tay
+function refill(){
+  if(dirty)return;
+  edits=new Map();
+  if(picked.length===1){queue=[withContent(one(picked[0]))];$m('f-title').value=queue[0].title;$m('f-edit').replaceChildren(editor(queue[0]))}
+  else renderList();
+}
+function startAi(list){
+  if(aiCall)aiCall.abort();aiCall=null;
+  const need=list.filter(b=>b.facts&&!ai.has(b.id));
+  if(!RUN_ID||!list.some(b=>b.facts))return;
+  if(!need.length)return setStatus('Nội dung do AI viết theo hướng dẫn — xem lại trước khi tạo','ok');
+  const ctl=new AbortController();aiCall=ctl;const timer=setTimeout(()=>ctl.abort(),150000);
+  $m('f-submit').disabled=true;setStatus('AI đang viết lại '+need.length+' bug theo hướng dẫn…');
+  aiRewrite(need,ctl.signal).then(()=>{if(aiCall!==ctl)return;refill();setStatus(dirty?'AI đã viết xong — giữ phần bạn đã sửa (bấm "Khôi phục nội dung gốc" để lấy bản AI)':'Nội dung do AI viết theo hướng dẫn — xem lại trước khi tạo','ok')})
+    .catch(err=>{if(aiCall!==ctl)return;setStatus('AI chưa viết được ('+(err.name==='AbortError'?'quá thời gian':err.message)+') — đang dùng nội dung mẫu','err')})
+    .finally(()=>{clearTimeout(timer);if(aiCall===ctl){aiCall=null;$m('f-submit').disabled=false}});
+}
 function openForm(list){
-  picked=list;const single=list.length===1;
+  picked=list;edits=new Map();dirty=false;const single=list.length===1;
   $m('f-single').style.display=single?'':'none';$m('f-bulk').style.display=single?'none':'';
   const anyImg=list.some(b=>b.imgs.length);$m('f-attach').checked=anyImg;$m('f-attach').disabled=!anyImg;
-  if(single){queue=[one(list[0])];$m('f-title').value=queue[0].title;$m('f-priority').value=queue[0].priority;
-    $m('f-preview').innerHTML=noteHtml(queue[0].bugs,anyImg);$m('f-submit').textContent='Tạo subtask'}
+  if(single){queue=[withContent(one(list[0]))];$m('f-title').value=queue[0].title;$m('f-priority').value=queue[0].priority;
+    $m('f-edit').replaceChildren(editor(queue[0]));$m('f-submit').textContent='Tạo subtask'}
   else{
     // Chỉ hiện tuỳ chọn gộp khi có ≥ 2 bug UI cùng màn
     const cnt={};list.filter(b=>b.type==='UI').forEach(b=>cnt[b.screen]=(cnt[b.screen]||0)+1);
@@ -107,6 +161,7 @@ function openForm(list){
   $m('f-parent').value=store.get(K_PARENT)||'';
   $m('f-submit').disabled=false;$m('f-merge').disabled=false;
   setStatus('');showToken();modal.classList.add('on');
+  startAi(list);
 }
 document.addEventListener('click',e=>{const b=e.target.closest('button.asana[data-id]');if(b)openForm([bugOf(b.closest('.bug'))])});
 $m('sel-log').onclick=()=>{const l=picks();if(l.length)openForm(l)};
@@ -125,7 +180,7 @@ async function priorityField(token,task){
 async function logItem(it,{token,parent,assignee,attach,single,field}){
   const withImg=attach&&it.imgs.length>0;
   const prio=single?$m('f-priority').value:it.priority;
-  const data={name:single?$m('f-title').value.trim():it.title,html_notes:noteHtml(it.bugs,withImg)};
+  const data={name:(single?$m('f-title').value:it.title).trim(),html_notes:noteHtml(it,withImg)};
   if(assignee)data.assignee=assignee;
   const opt=field&&field.option(prio);
   let sub,prioSet=false;
@@ -148,6 +203,8 @@ modal.querySelector('form').addEventListener('submit',async e=>{
   const parent=parseTask($m('f-parent').value);
   if(!token)return setStatus('Nhập Asana token','err');
   if(!parent)return setStatus('Không đọc được ID task cha từ link','err');
+  const empty=queue.find(it=>!(picked.length===1?$m('f-title').value:it.title).trim()||!lines(it.c.steps).length||!it.c.actual.trim()||!it.c.expected.trim());
+  if(empty)return setStatus(empty.bugs.map(b=>b.id).join('+')+': Title, Steps, Actual, Expected không được để trống','err');
   $m('f-submit').disabled=true;$m('f-merge').disabled=true;
   const opts={token,parent,assignee:$m('f-assignee').value.trim(),attach:attachOn(),single:picked.length===1};
   let p;

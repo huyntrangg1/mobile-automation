@@ -4,7 +4,10 @@ import crypto from 'node:crypto';
 import { DOMParser } from '@xmldom/xmldom';
 
 const KEEP = new Set(['Button', 'StaticText', 'TextField', 'SecureTextField', 'TextView', 'SearchField', 'Switch', 'Toggle',
-  'Image', 'Cell', 'Slider', 'Picker', 'PickerWheel', 'DatePicker', 'Link', 'SegmentedControl', 'Stepper', 'Alert']);
+  'Image', 'Cell', 'Slider', 'Picker', 'PickerWheel', 'DatePicker', 'Link', 'SegmentedControl', 'Stepper', 'Alert',
+  'ProgressIndicator', 'ActivityIndicator', 'PageIndicator']);
+// Other chỉ giữ khi dev gắn nhãn accessibility (vd progress bar "Onboarding progress") — còn lại là khung bao
+const labeledOther = (c) => c.getAttribute('accessible') === 'true' && !!(c.getAttribute('name') || c.getAttribute('label'));
 const INPUTS = new Set(['TextField', 'SecureTextField', 'TextView', 'SearchField']);
 // Cây con không thuộc app: bàn phím, thanh gợi ý gõ
 const SKIP_SUBTREE = new Set(['Keyboard']);
@@ -89,7 +92,7 @@ export function parseElements(xml) {
       if (SKIP_SUBTREE.has(type) || SKIP_NAMES.test(c.getAttribute('name') || '')) continue;
       if (/^_Tt/.test(c.getAttribute('name') || '')) { walk(c); continue; } // tên nội bộ SwiftUI (NavigationBar…)
       const visible = c.getAttribute('visible') !== 'false';
-      if (KEEP.has(type) && visible) {
+      if ((KEEP.has(type) || (type === 'Other' && labeledOther(c))) && visible) {
         const name = c.getAttribute('name') || '';
         const placeholder = c.getAttribute('placeholderValue') || '';
         let value = c.getAttribute('value') || '';
@@ -166,6 +169,43 @@ export function screenSimilarity(a, b) {
 
 // Cùng một màn khi độ giống ≥ 80%
 export const sameScreen = (a, b, threshold = 0.8) => screenSimilarity(a, b) >= threshold;
+
+// Tiêu đề màn: chữ tĩnh trên cùng (bỏ chữ nút điều hướng, chữ trông như dữ liệu: "Step 2 of 3", giờ…)
+export function screenTitle(els) {
+  const t = els.filter((e) => e.type === 'StaticText' && e.name && !/^(Back|Close)$/i.test(e.name) && !dynamicText(e.name))
+    .sort((a, b) => a.rect.y - b.rect.y || a.rect.x - b.rect.x)[0];
+  return t ? t.name.replace(/\s+/g, ' ').trim().toLowerCase() : null;
+}
+const actions = (els) => new Set([...keyset(els)].filter((k) => !k.startsWith('Text:')));
+// Cùng tiêu đề + trùng ≥ nửa số nút / ô nhập → cùng 1 màn dù nội dung khác: tutorial tự chuyển bước (mỗi bước 1 câu hướng dẫn),
+// màn ẩn / hiện bớt nút theo trạng thái (Welcome có / không có "Log in"). Khác tiêu đề thì không gộp dù cùng nút (Back + Continue)
+export function sameTitled(a, b) {
+  const ta = screenTitle(a);
+  if (!ta || ta !== screenTitle(b)) return false;
+  return jaccard(actions(a), actions(b)) >= 0.5;
+}
+
+// Màn đang tải dở / hiện dần (paywall chưa hiện nút, danh sách chưa đổ xong): gần hết chữ + nút của màn ít phần tử hơn
+//   nằm trong màn kia, và tiêu đề của nó cũng có ở màn kia. Cần ≥ 3 chữ nội dung: màn chỉ có thanh tab (có ở mọi tab) không tính
+export function partOf(a, b) {
+  const A = keyset(a);
+  const B = keyset(b);
+  const [small, big, smallEls] = A.size <= B.size ? [A, B, a] : [B, A, b];
+  if ([...small].filter((k) => k.startsWith('Text:')).length < 3) return false;
+  const title = screenTitle(smallEls);
+  if (!title || ![...big].some((k) => k.startsWith('Text:') && k.slice(5).replace(/\s+/g, ' ').trim().toLowerCase() === title)) return false;
+  let n = 0;
+  for (const k of small) if (big.has(k)) n++;
+  return n / small.size >= 0.85;
+}
+
+// Khung hình đang chạy hiệu ứng: chữ hiện từng ký tự ("T","a","s"…), không có nút / ô nhập → không ghi thành màn
+export function isTransient(els) {
+  const texts = els.filter((e) => e.type === 'StaticText' && e.name);
+  const single = texts.filter((e) => e.name.trim().length <= 1).length;
+  const acts = els.filter((e) => e.type === 'Button' || INPUTS.has(e.type)).length;
+  return acts === 0 && single >= 3 && single >= texts.length * 0.6;
+}
 
 // Bản rút gọn cho AI: mỗi phần tử 1 dòng
 export function toPrompt(els) {

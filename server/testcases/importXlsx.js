@@ -10,11 +10,31 @@ export const fileStem = (name) => path.basename(name).replace(/\.xlsx$/i, '').re
 const moduleOf = (tcId) => (tcId.match(/^TC_([A-Za-z0-9]+)_/) || [])[1] || 'Khác';
 const hash = (tc) => crypto.createHash('sha1').update(JSON.stringify([tc.title, tc.pre, tc.dataSet, tc.rows])).digest('hex').slice(0, 12);
 
-export async function importTestcases({ store, appId, srcPath, fileName, loaderPath }) {
+// File đã import của app trùng nhiều TC ID nhất với danh sách mới (≥ một nửa case của file mới)
+export function findOverlap(store, appId, tcIds) {
+  const ids = new Set(tcIds);
+  const byFile = new Map();
+  for (const c of store.list('cases')) {
+    if (c.appId !== appId) continue;
+    const f = byFile.get(c.file) || { file: c.file, existing: 0, overlap: 0 };
+    f.existing++;
+    if (ids.has(c.tcId)) f.overlap++;
+    byFile.set(c.file, f);
+  }
+  const best = [...byFile.values()].sort((a, b) => b.overlap - a.overlap)[0];
+  return best && best.overlap * 2 >= ids.size ? { ...best, total: ids.size } : null;
+}
+
+// into: null = theo tên file; '<file>' = cập nhật file đã import đó; '*new' = luôn import thành file riêng.
+// File tên mới nhưng trùng nhiều TC ID với file đã có (vd "… (2).xlsx" trình duyệt tự đặt) → 409 kèm match để hỏi lại,
+// tránh mọi case thành case mới phải gen script lại từ đầu.
+export async function importTestcases({ store, appId, srcPath, fileName, loaderPath, into = null }) {
   const app = store.get('apps', appId);
   if (!app) throw Object.assign(new Error('Không có app này'), { status: 404 });
   if (!/\.xlsx$/i.test(fileName)) throw Object.assign(new Error('Cần file .xlsx'), { status: 400 });
-  const stem = fileStem(fileName);
+  const hasFile = (f) => store.list('cases').some((c) => c.appId === appId && c.file === f);
+  if (into && into !== '*new' && !hasFile(into)) throw Object.assign(new Error(`App chưa có file ${into}.xlsx để cập nhật`), { status: 400 });
+  const stem = into && into !== '*new' ? into : fileStem(fileName);
   // Đọc thử từ bản tạm trước: file lỗi thì không ghi đè bản đang dùng
   const loader = await import(pathToFileURL(loaderPath || path.join(app.workspace, 'data/loaders/testcase-v2.js')).href);
   const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'qapd-imp-')), `${stem}.xlsx`);
@@ -26,6 +46,10 @@ export async function importTestcases({ store, appId, srcPath, fileName, loaderP
     throw Object.assign(new Error(`Không đọc được file Excel (format automation v2): ${e.message}`), { status: 400 });
   }
   if (!parsed.testcases.length) throw Object.assign(new Error('Sheet TestCases không có case nào (dòng Kind = Case)'), { status: 400 });
+  if (!into && !hasFile(stem)) {
+    const match = findOverlap(store, appId, parsed.testcases.map((tc) => tc.id));
+    if (match) throw Object.assign(new Error(`${match.overlap}/${match.total} case trùng TC ID với ${match.file}.xlsx đã import`), { status: 409, match });
+  }
   const dest = path.join(app.workspace, 'data/testcases', `${stem}.xlsx`);
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.copyFileSync(tmp, dest);
@@ -47,7 +71,7 @@ export async function importTestcases({ store, appId, srcPath, fileName, loaderP
     if (!old) added++;
     store.put('cases', {
       id, appId, file: stem, fileName: `${stem}.xlsx`, tcId: tc.id, title: tc.title, priority: tc.priority, module: moduleOf(tc.id),
-      order, fresh: tc.fresh, prev: tc.prev, pre: tc.pre, dataSet: tc.dataSet, rows: tc.rows, rowsHash, script,
+      order, fresh: tc.fresh, prev: tc.prev, pre: tc.pre, dataSet: tc.dataSet, rows: tc.rows, rowsHash, script, platform: tc.platform || 'All',
       importedAt: now,
     });
   });

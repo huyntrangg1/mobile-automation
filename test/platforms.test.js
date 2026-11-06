@@ -77,3 +77,78 @@ test('deviceScreenshot(udid, file, platform) — cùng thứ tự tham số runn
   await deviceScreenshot(devs[0].udid, f, 'Android');
   assert.ok(fs.statSync(f).size > 1000);
 });
+
+test('wdaInstalled: chỉ true khi WDA trên simulator trùng bản build sẵn (so mã băm thư viện)', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { wdaInstalled } = await import('../server/device/platforms.js');
+  const { tmpDir } = await import('./helpers.js');
+  const lib = 'PlugIns/WebDriverAgentRunner.xctest/Frameworks/WebDriverAgentLib.framework/WebDriverAgentLib';
+  const mk = (root, content) => { const f = path.join(root, lib); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, content); return root; };
+  const wdaDir = tmpDir();
+  mk(path.join(wdaDir, 'Build/Products/Debug-iphonesimulator/WebDriverAgentRunner-Runner.app'), 'v9');
+  const same = mk(tmpDir(), 'v9');
+  const old = mk(tmpDir(), 'v7');
+  assert.equal(await wdaInstalled('U', { wdaDir, exec: async () => `${same}\n` }), true);
+  assert.equal(await wdaInstalled('U', { wdaDir, exec: async () => `${old}\n` }), false);
+  assert.equal(await wdaInstalled('U', { wdaDir, exec: async () => { throw new Error('No such app'); } }), false);
+});
+
+test('readAppInfo: build cho iPhone thật (iPhoneOS) → lỗi rõ ràng; build Simulator → nhận', async () => {
+  const fs = await import('node:fs');
+  const { tmpDir } = await import('./helpers.js');
+  const mk = (platforms) => {
+    const dir = path.join(tmpDir(), 'Recime.app');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'Info.plist'), '');
+    const exec = async (_cmd, args) => (args.includes('CFBundleSupportedPlatforms') ? JSON.stringify(platforms) : args.includes('CFBundleIdentifier') ? 'com.x' : '1.0');
+    return { dir, exec };
+  };
+  const dev = mk(['iPhoneOS']);
+  await assert.rejects(readAppInfo(dev.dir, { exec: dev.exec }), /build cho iPhone thật \(iPhoneOS\) — cần build cho Simulator/);
+  const sim = mk(['iPhoneSimulator']);
+  assert.equal((await readAppInfo(sim.dir, { exec: sim.exec })).bundleId, 'com.x');
+});
+
+test('readAppInfo: nền tảng lấy từ file chạy (vtool) — build chuyển sang Simulator (plist iPhoneOS, file chạy IOSSIMULATOR) → nhận + đánh dấu cần sửa plist', async () => {
+  const fs = await import('node:fs');
+  const { tmpDir } = await import('./helpers.js');
+  const dir = path.join(tmpDir(), 'Recime.app');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'Info.plist'), '');
+  const exec = (bin) => async (cmd, args) => {
+    if (cmd === 'vtool') return ` platform ${bin}\n    minos 14.0`;
+    if (args.includes('CFBundleSupportedPlatforms')) return '["iPhoneOS"]';
+    if (args.includes('CFBundleExecutable')) return 'Recime';
+    return args.includes('CFBundleIdentifier') ? 'com.x' : '1.0';
+  };
+  const i = await readAppInfo(dir, { exec: exec('IOSSIMULATOR') });
+  assert.equal(i.simPlistFix, true);
+  await assert.rejects(readAppInfo(dir, { exec: exec('IOS') }), /build cho iPhone thật \(IOS\)/);
+});
+
+test('sessionCaps (lấy locator): popup xin quyền tự xử lý theo SYSTEM_ALERT — mặc định từ chối, allow → cho phép, off → để nguyên', () => {
+  const ios = (env) => sessionCaps({ platform: 'iOS', appPath: '/a.app', bundleId: 'b', env }, 'U');
+  assert.equal(ios({})['appium:autoDismissAlerts'], true);
+  assert.equal(ios({ SYSTEM_ALERT: 'allow' })['appium:autoAcceptAlerts'], true);
+  assert.equal(ios({ SYSTEM_ALERT: 'off' })['appium:autoDismissAlerts'], undefined);
+  assert.equal(sessionCaps({ platform: 'Android', appPath: '/a.apk', bundleId: 'io.x', env: {} }, 'E')['appium:autoGrantPermissions'], true);
+});
+
+// ---- Cấu hình iOS theo framework của skill (Ctx.java / GUIDE §8): không chờ app "yên", WDA thử lại, timeout dài ----
+import { attachCaps, realIosCaps } from '../server/device/platforms.js';
+test('caps iOS: waitForQuiescence=false, reduceMotion, WDA thử lại 3 lần + timeout 180s (Simulator và attach); iPhone thật cũng không chờ quiescence', () => {
+  const sim = sessionCaps({ platform: 'iOS', appPath: '/a.app', bundleId: 'b' }, 'U');
+  const att = attachCaps({ platform: 'iOS', bundleId: 'b' }, 'U');
+  for (const c of [sim, att]) {
+    assert.equal(c['appium:waitForQuiescence'], false);
+    assert.equal(c['appium:wdaStartupRetries'], 3);
+    assert.equal(c['appium:wdaStartupRetryInterval'], 5000);
+    assert.equal(c['appium:wdaLaunchTimeout'], 180000);
+    assert.equal(c['appium:wdaConnectionTimeout'], 180000);
+  }
+  assert.equal(sim['appium:reduceMotion'], true);
+  assert.equal(realIosCaps({ bundleId: 'b' }, '00008120-001055C03C44A01E', 'TEAM123456')['appium:waitForQuiescence'], false);
+  // Android không bị ảnh hưởng
+  assert.equal(sessionCaps({ platform: 'Android', appPath: '/a.apk', bundleId: 'io.x' }, 'E')['appium:waitForQuiescence'], undefined);
+});

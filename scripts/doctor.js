@@ -5,7 +5,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { runChecks } from './doctor-checks.js';
-import { ROOT, IK_FITNESS, TEST_REPORT_VENDOR, TEST_REPORT_SKILL_SRC } from '../server/paths.js';
+import { ROOT, IK_FITNESS, TEST_REPORT_VENDOR, TEST_REPORT_SKILL_SRC, SELECT_AUTOMATION_VENDOR, SELECT_AUTOMATION_SRC } from '../server/paths.js';
 import { sameTree } from './sync-report.js';
 import { ANDROID_HOME, listDevices } from '../server/device/platforms.js';
 import { listSimulators } from '../server/device/simulators.js';
@@ -28,6 +28,7 @@ const probes = {
   },
   testReport: async () => fs.existsSync(path.join(TEST_REPORT_VENDOR, 'scripts/install.sh')),
   reportSync: async () => (fs.existsSync(TEST_REPORT_SKILL_SRC) ? (sameTree(TEST_REPORT_SKILL_SRC, TEST_REPORT_VENDOR) ? 'same' : 'diff') : 'no-source'),
+  selectSkillSync: async () => (fs.existsSync(SELECT_AUTOMATION_SRC) ? (sameTree(SELECT_AUTOMATION_SRC, SELECT_AUTOMATION_VENDOR, { ignore: ['node_modules', 'package.json', 'package-lock.json', 'VERSION'] }) ? 'same' : 'diff') : 'no-source'),
   ikFitness: async () => fs.existsSync(path.join(IK_FITNESS, 'src/pages/index.js')),
   xcode: async () => (await sh('xcodebuild', ['-version'])).split('\n')[0],
   simulators: async () => (await listSimulators()).length,

@@ -9,10 +9,25 @@ import { promisify } from 'node:util';
 import { runClaude as defaultRunClaude } from '../ai/claude.js';
 import { TEST_REPORT_SKILL } from '../paths.js';
 import { buildScript, helperModules, readRegions } from './scriptFile.js';
+import { keywordsNote, locatorText, pickScreens } from './promptParts.js';
 
-const PROMPT = fs.readFileSync(fileURLToPath(new URL('../ai/prompts/gen-case.md', import.meta.url)), 'utf8');
+// Đọc lại mỗi lần gen: sửa prompt có hiệu lực ngay, không cần khởi động lại server (--watch không theo dõi .md)
+const PROMPT_FILE = fileURLToPath(new URL('../ai/prompts/gen-case.md', import.meta.url));
+const prompt = () => fs.readFileSync(PROMPT_FILE, 'utf8');
 const SCHEMA = { type: 'object', properties: { body: { type: 'string' }, warnings: { type: 'array', items: { type: 'string' } } }, required: ['body', 'warnings'] };
 const CONCURRENCY = 3;
+// Code AI không được tự gọi (k lo evidence / điểm kiểm / log đúng mẫu): gặp → hỏi AI sửa
+const MISUSE = [
+  { call: 'snapshot(', re: /\bsnapshot\s*\(/ },
+  { call: 'sa.eq(', re: /\bsa\.eq\s*\(/ },
+  { call: 'logStep(', re: /(^|[^.\w])logStep\s*\(/m },
+];
+const K_TABLES = { v2: fileURLToPath(new URL('../ai/prompts/k-table-v2.md', import.meta.url)), legacy: fileURLToPath(new URL('../ai/prompts/k-table-legacy.md', import.meta.url)) };
+const kTable = (ws) => {
+  let v2 = false;
+  try { v2 = /\basync count\(/.test(fs.readFileSync(path.join(ws, 'src/runner/steps.js'), 'utf8')); } catch {}
+  return fs.readFileSync(v2 ? K_TABLES.v2 : K_TABLES.legacy, 'utf8').trim();
+};
 const fill = (tpl, v) => tpl.replace(/\{\{(\w+)\}\}/g, (_, k) => String(v[k] ?? ''));
 
 // Phần "Instrumenting a spec" + "Rules for checks" của skill test-report (đọc lúc chạy để luôn theo bản mới)
@@ -91,7 +106,18 @@ export function createGenerator({ store, map, emit, runClaude = defaultRunClaude
     return out;
   }
 
-  async function generateCase(caseId) {
+  // Script trước khi bấm gen — dừng gen thì trả lại đúng trạng thái này (vd vẫn "Đã gen" bản cũ)
+  const before = new Map();
+  const controllers = new Map(); // case đang gọi AI → AbortController
+  const queues = new Set(); // hàng đợi của các lần generate() đang chạy — dừng case còn chờ thì rút khỏi hàng
+  const restore = (id) => {
+    const c = store.get('cases', id);
+    const prev = before.get(id);
+    before.delete(id);
+    if (c) setScript(c, prev && prev.status !== 'generating' ? prev : { ...c.script, status: 'none', error: null });
+  };
+
+  async function generateCase(caseId, signal) {
     const c = store.get('cases', caseId);
     if (!c) return null; // case bị xoá (import lại) trong lúc chờ gen
     const app = store.get('apps', c.appId);
@@ -101,23 +127,42 @@ export function createGenerator({ store, map, emit, runClaude = defaultRunClaude
       map.exportLocators(app.id);
       const table = map.locatorTable(app.id);
       const helpers = helperModules(app.workspace);
+      const aliases = Object.fromEntries(store.list('screens').filter((s) => s.appId === app.id).map((s) => [s.name, s.aliases || []]));
       const base = {
         appName: app.name, platform: app.platform || 'iOS', file: c.file, tcId: c.tcId, title: c.title,
         freshNote: c.fresh ? 'Case này "Cài lại app": khung đã cài lại và mở app (và tạo sẵn tài khoản dữ liệu nếu case cần) trước khi gọi hàm.' : `Case này tiếp nối ${c.prev}: app đang ở trạng thái case trước để lại.`,
         pre: c.pre.map((l) => `- ${l}`).join('\n') || '- (không có)',
         rows: c.rows.map((r) => [r.step, r.screen, r.kind, r.keyword, r.target, r.value, r.compare, r.label].join(' | ')).join('\n'),
-        locators: Object.entries(table).map(([n, rows]) => `## Màn "${n}"\n${rows.map((r) => `- ${r.type} "${r.key}" → L['${n}'][${JSON.stringify(r.key)}]`).join('\n')}`).join('\n\n'),
+        locators: locatorText(table, pickScreens(c.rows, table, { aliases, pre: c.pre })),
         helpers: helpers.map((h) => `  - ${h.ns}: ${h.exports.join(', ')}`).join('\n'),
+        keywords: keywordsNote(app.workspace),
         skillRules: skillRules(),
+        // Bảng k: runner mới của template có đủ keyword v2; helper pack có runner riêng (chưa có) → bảng cũ
+        kTable: kTable(app.workspace),
+        // Hành vi riêng của app tester ghi ở Cài đặt app (vd tutorial tự chuyển slide) — AI không tự biết được
+        appNotes: app.aiNotes ? `# Ghi chú về app (tester viết — tuân theo khi viết code)\n${app.aiNotes}\n` : '',
       };
       let retry = '';
       let last = '';
       for (let attempt = 0; attempt < 2; attempt++) {
-        const r = await runClaude({ prompt: fill(PROMPT, { ...base, retry }), schema: SCHEMA, cwd: app.workspace, timeoutMs: 300000 });
+        // Không tool: mọi thứ cần đã có trong prompt → 1 lượt, không lục workspace
+        // Phần trước "# Case" (hợp đồng, bảng k, quy tắc, helper) giống nhau giữa các case cùng app → system prompt (được cache);
+        // phần của case (bước, locator, lỗi lần trước) → tin nhắn
+        const full = fill(prompt(), { ...base, retry });
+        const cut = full.indexOf('\n# Case ');
+        const r = await runClaude({ system: cut > 0 ? full.slice(0, cut) : undefined, prompt: cut > 0 ? full.slice(cut + 1) : full, schema: SCHEMA, cwd: app.workspace, timeoutMs: 300000, noTools: true, signal });
+        if (r.cancelled || signal?.aborted) return null; // dừng gen → generate() trả lại script cũ
         if (!r.ok) return setScript(c, { ...c.script, status: 'failed', error: r.error, warnings: [] });
         const body = String(r.data.body || '').trim();
         if (!/^async\s*\(/.test(body) || !/=>\s*\{[\s\S]*\}$/.test(body)) return setScript(c, { ...c.script, status: 'failed', error: 'AI trả về body không phải hàm async ({ tc, data, sa, fill }) => { … }', warnings: [] });
         if (/runTestcase/.test(body)) return setScript(c, { ...c.script, status: 'failed', error: 'Code AI gen gọi runTestcase (keyword runner) — không được dùng', warnings: [] });
+        // Tự gọi snapshot / sa.eq / logStep → hay sai chữ ký (lỗi lúc chạy, bug vô nghĩa) → bắt AI sửa, không lưu
+        const misuse = MISUSE.filter((m) => m.re.test(body)).map((m) => m.call);
+        if (misuse.length) {
+          last = `Không gọi trực tiếp: ${misuse.join(', ')}`;
+          retry = `\n# Lần trước code sai quy tắc, sửa lại:\n${last} — điểm kiểm dùng k.shown / k.text / k.selected / k.enabled hoặc đọc giá trị rồi k.check(step, screen, keyword, target, label, sel, actual, expected); thao tác riêng xong gọi k.log(...).\n`;
+          continue;
+        }
         const saved = await withFile(`${app.id}:${c.file}`, () => saveRegions(app, c.file, { [c.tcId]: body }));
         if (!saved.error) {
           const warnings = [...warningsFor(c, table, app.platform || 'iOS'), ...(r.data.warnings || [])];
@@ -128,7 +173,7 @@ export function createGenerator({ store, map, emit, runClaude = defaultRunClaude
         last = saved.error;
         retry = `\n# Lần trước code bị lỗi cú pháp, sửa lại:\n${saved.error}\n`;
       }
-      return setScript(c, { ...c.script, status: 'failed', error: `SyntaxError sau 2 lần gen: ${last}`, warnings: [] });
+      return setScript(c, { ...c.script, status: 'failed', error: `Sau 2 lần gen vẫn lỗi: ${last}`, warnings: [] });
     } catch (e) {
       return setScript(c, { ...c.script, status: 'failed', error: String(e.message || e) });
     }
@@ -140,18 +185,42 @@ export function createGenerator({ store, map, emit, runClaude = defaultRunClaude
   async function generate(appId, caseIds) {
     const queue = caseIds.filter((id) => !inFlight.has(id));
     queue.forEach((id) => inFlight.add(id));
+    queues.add(queue);
     for (const id of queue) {
       const c = store.get('cases', id);
-      if (c) setScript(c, { ...c.script, status: 'generating', error: null });
+      if (c) { before.set(id, c.script); setScript(c, { ...c.script, status: 'generating', error: null }); }
     }
     const worker = async () => {
       while (queue.length) {
         const id = queue.shift();
-        try { await generateCase(id); } catch (e) { console.error(`Gen ${id} lỗi:`, e); } finally { inFlight.delete(id); }
+        const ctl = new AbortController();
+        controllers.set(id, ctl);
+        try {
+          // null = dừng trước khi ghi file → trả script cũ. Bấm dừng lúc AI đã trả và đang ghi file → giữ kết quả mới (file đã đổi)
+          if ((await generateCase(id, ctl.signal)) === null && ctl.signal.aborted) restore(id);
+        } catch (e) { console.error(`Gen ${id} lỗi:`, e); } finally { controllers.delete(id); before.delete(id); inFlight.delete(id); }
       }
     };
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
+    queues.delete(queue);
   }
+
+  // Dừng gen: case đang gọi AI → kill; case còn chờ → bỏ khỏi hàng. Cả hai trả lại script trước khi gen.
+  function cancel(caseIds) {
+    let n = 0;
+    for (const id of caseIds) {
+      if (!inFlight.has(id)) continue;
+      n++;
+      const ctl = controllers.get(id);
+      if (ctl) { ctl.abort(); continue; }
+      // Còn chờ trong hàng → rút ra luôn (gen lại ngay sau đó không bị coi là trùng)
+      for (const q of queues) { const i = q.indexOf(id); if (i >= 0) q.splice(i, 1); }
+      inFlight.delete(id);
+      restore(id);
+    }
+    return n;
+  }
+  const generatingIds = (appId) => [...inFlight].filter((id) => store.get('cases', id)?.appId === appId);
 
   // Lưu cả file sửa tay: chỉ khi file trên đĩa chưa đổi kể từ lúc client tải (baseHash), ghi tuần tự cùng generator
   function saveFile(app, file, code, baseHash) {
@@ -173,5 +242,5 @@ export function createGenerator({ store, map, emit, runClaude = defaultRunClaude
     return withFile(`${app.id}:${file}`, () => saveRegions(app, file, {}));
   }
 
-  return { generate, generateCase, saveRegions, saveFile, refreshScript, scriptPath, casesOf, hashOf };
+  return { generate, cancel, generatingIds, generateCase, saveRegions, saveFile, refreshScript, scriptPath, casesOf, hashOf };
 }

@@ -63,3 +63,6 @@ export const fmtDur = (ms) => {
   const s = Math.round(ms / 1000);
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
 };
+
+// Avatar chữ viết tắt: "Tastory-1.0.4" → TA, "Elix: GLP-1" → EG
+export const initials = (name) => { const w = name.replace(/[-:·_.]/g, ' ').trim().split(/\s+/); return ((w[0]?.[0] || '') + (w[1]?.[0] || w[0]?.[1] || '')).toUpperCase(); };

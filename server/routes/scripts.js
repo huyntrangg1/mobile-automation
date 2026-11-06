@@ -1,5 +1,7 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { Router } from 'express';
+import { exportToSimutil } from '../scripts/simutil.js';
 
 const wrap = (fn) => async (req, res, next) => { try { await fn(req, res); } catch (e) { next(e); } };
 
@@ -18,6 +20,13 @@ export default function scriptRoutes({ store, emit, generator }) {
     if (!ids.length) return res.status(400).json({ error: 'Chưa chọn case' });
     generator.generate(app.id, ids).catch((e) => console.error('generate:', e)); // chạy nền, tiến độ qua SSE "script"
     res.status(202).json({ queued: ids.length });
+  }));
+
+  // Dừng gen: body { caseIds } hoặc { all: true } (mọi case đang gen / chờ gen của app)
+  r.post('/apps/:appId/scripts/cancel', wrap(async (req, res) => {
+    const app = appOf(req);
+    const ids = req.body?.all ? generator.generatingIds(app.id) : (req.body?.caseIds || []).filter((id) => store.get('cases', id)?.appId === app.id);
+    res.json({ cancelled: generator.cancel(ids) });
   }));
 
   r.get('/apps/:appId/scripts', wrap(async (req, res) => {
@@ -50,6 +59,14 @@ export default function scriptRoutes({ store, emit, generator }) {
       }
     }
     res.json({ ok: true });
+  }));
+
+  // Export sang SimUtil: ghi ~/.simutil/projects/<app>-<file>/scripts/<TC>.js (format @kwcase, từ các dòng Excel)
+  r.post('/apps/:appId/scripts/:file/simutil', wrap(async (req, res) => {
+    const app = appOf(req);
+    const cases = generator.casesOf(app.id, req.params.file);
+    const excel = cases[0]?.fileName && app.workspace ? path.join(app.workspace, 'data/testcases', cases[0].fileName) : null;
+    res.json(exportToSimutil(app, req.params.file, cases, { excel }));
   }));
 
   r.post('/cases/:id/reviewed', wrap(async (req, res) => {

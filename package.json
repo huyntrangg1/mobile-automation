@@ -8,7 +8,8 @@
     "start": "vite build web && node server/index.js",
     "test": "node --test \"test/*.test.js\"",
     "doctor": "node scripts/doctor.js",
-    "sync-report": "node scripts/sync-report.js"
+    "sync-report": "node scripts/sync-report.js",
+    "sync-select-skill": "node scripts/sync-select-skill.js"
   },
   "dependencies": {
     "@xmldom/xmldom": "^0.9.12",
@@ -22,6 +23,7 @@
     "@codemirror/lang-javascript": "^6.2.5",
     "@uiw/react-codemirror": "^4.25.12",
     "@vitejs/plugin-react": "^4.7.0",
+    "pngjs": "^7.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.30.6",

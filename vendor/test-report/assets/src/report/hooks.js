@@ -4,7 +4,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
-import { resetCurrent, takeCurrent, takePlanned } from './collector.js';
+import { resetCurrent, settleSeen, summarizeSource, takeCurrent, takePlanned } from './collector.js';
+
+export { summarizeSource };
 import { writeEvidence } from './annotate.js';
 import { buildModel, renderReport } from './html.js';
 import { resultsWorkbook, syncTestcaseFiles } from './excel.js';
@@ -87,7 +89,17 @@ export function writeHookFailure(reports, test, { error }) {
   });
 }
 
-export function writeResult(reports, test, { passed, error, duration }, failShot) {
+// Gọi ở afterTest khi test fail (trước khi app đổi màn): màn đang hiện, để bug ghi đúng cái người dùng thấy
+export async function screenSummary() {
+  await settleSeen(); // màn lúc từng điểm kiểm lệch (addBug) đọc xong trước khi gom kết quả
+  try {
+    return summarizeSource(await browser.getPageSource());
+  } catch {
+    return null;
+  }
+}
+
+export function writeResult(reports, test, { passed, error, duration }, failShot, seen = null) {
   const { results, evidence } = reportDirs(reports);
   fs.mkdirSync(results, { recursive: true });
   fs.mkdirSync(evidence, { recursive: true });
@@ -101,18 +113,31 @@ export function writeResult(reports, test, { passed, error, duration }, failShot
       screen: ev?.screen ?? b.screen ?? null,
       image: ev?.image ? writeEvidence(ev, path.join(evidence, `${id}-${i + 1}`)) : null,
       found: Boolean(ev?.rect) && !ev?.missing, missing: Boolean(ev?.missing), instead: ev?.instead || [],
+      seen: b.seen || null,
     };
   });
-  // Fail không qua điểm kiểm → dùng ảnh lúc fail, thu nhỏ cho nhẹ report
+  // Ảnh lúc fail (thu nhỏ cho nhẹ report): bug chặn luồng dùng ảnh này, kể cả khi case đã có bug điểm kiểm trước đó
   let shot = null;
-  if (!passed && !bugs.length && failShot && fs.existsSync(failShot)) {
+  if (!passed && !(failShot && fs.existsSync(failShot))) failShot = cur.screen?.shot;
+  if (!passed && failShot && fs.existsSync(failShot)) {
     shot = path.join(evidence, `${id}-fail.jpg`);
     execFileSync('sips', ['-Z', '1100', '-s', 'format', 'jpeg', '-s', 'formatOptions', '75', failShot, '--out', shot], { stdio: 'ignore' });
   }
+  // Bước chặn luồng tester cho chạy tiếp (Skip / Use element): ảnh lúc lỗi thu nhỏ như failShot
+  const flows = (cur.flows || []).map((f, i) => {
+    let image = null;
+    if (f.shot && fs.existsSync(f.shot)) {
+      image = path.join(evidence, `${id}-flow-${i + 1}.jpg`);
+      execFileSync('sips', ['-Z', '1100', '-s', 'format', 'jpeg', '-s', 'formatOptions', '75', f.shot, '--out', image], { stdio: 'ignore' });
+    }
+    return { step: f.step, screen: f.screen, target: f.target, error: f.error, seen: f.seen, image, at: f.at };
+  });
+  // Mocha báo pass nhưng có bước chặn luồng đã cho chạy tiếp → Failed
+  const ok = passed && !flows.length;
   const result = {
-    suite: test.parent, title: test.title, passed, duration, ...statusOf(passed, error),
+    suite: test.parent, title: test.title, passed: ok, duration, ...(passed && !ok ? { status: 'failed' } : statusOf(passed, error)),
     error: error ? String(error.message || error) : null,
-    case: cur.case, bugs, failShot: shot, steps: cur.steps,
+    case: cur.case, bugs, failShot: shot, steps: cur.steps, seen: passed ? null : seen || cur.screen?.seen || null, flows,
   };
   fs.writeFileSync(path.join(results, `${id}.json`), JSON.stringify(result));
 }
@@ -136,6 +161,7 @@ export async function buildHtml(reports, startedAt, { sync = true, appName = 'Ap
     return {
       ...r, status: r.status || (r.passed ? 'passed' : 'failed'),
       failShot: dataUrl(r.failShot), bugs: r.bugs.map((b) => ({ ...b, image: dataUrl(b.image) })),
+      flows: (r.flows || []).map((f) => ({ ...f, image: dataUrl(f.image) })),
     };
   });
   // Đã đăng ký nhưng không chạy (lọc --grep / --spec, run bị dừng) → Not Run

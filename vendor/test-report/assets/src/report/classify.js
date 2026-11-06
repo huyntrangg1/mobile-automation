@@ -32,10 +32,17 @@ export function classify(b) {
 
   const { keyword: k = '', actual: a, expected: e, label } = b;
   const t = String(b.target || b.value || label);
+  // So với Figma (UI theo Figma): lỗi giao diện, Severity theo độ lệch đo được (design.severity, tính ở bước so)
+  if (/^Verify design/.test(k) && b.design) {
+    return ui(`design-${b.design.kind || 'diff'}`, b.design.severity || 'Minor', b.design.reason || 'Giao diện khác Figma',
+      b.design.kind === 'missing' || /missing/.test(b.design.kind || '') ? ['Chưa xác minh phần tử thiếu có dùng cho thao tác nào không'] : []);
+  }
   // Phần tử cần có nhưng không có trên màn
   const absent = (/^Verify (displayed|text)$/.test(k) && a === false) || (a == null && /^Verify /.test(k) && k !== 'Verify not displayed');
   if (absent) {
     if (ERROR_TEXT.test(t)) return fn('validation', 'Major', `Không báo lỗi "${t}": kiểm tra dữ liệu không hoạt động đúng`);
+    // Thiếu cả một sheet / màn / popup mà luồng phải hiện (nhãn điểm kiểm nói rõ) → lỗi luồng, không phải thiếu chữ
+    if (/\b(sheet|màn|popup|dialog|hộp thoại)\b/i.test(String(label || ''))) return fn('screen', 'Major', `Không hiện "${t}" mà luồng phải hiện`);
     if (b.actionable) {
       return fn('navigation', main ? 'Critical' : 'Major', `Thiếu "${t}" mà người dùng cần thao tác: không vào được chức năng tương ứng`,
         ['Chưa xác minh có đường khác để tới chức năng này']);

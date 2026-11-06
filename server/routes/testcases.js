@@ -4,6 +4,7 @@ import multer from 'multer';
 import { importTestcases } from '../testcases/importXlsx.js';
 import { closure } from '../testcases/closure.js';
 import { planRemoval, removeCases } from '../testcases/remove.js';
+import { detectKind } from '../testcases/convert/detect.js';
 
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 30 * 1024 * 1024 } });
 const lite = ({ rows, pre, ...c }) => ({ ...c, steps: rows.length, checks: rows.filter((r) => r.kind === 'Check').length });
@@ -21,11 +22,15 @@ export default function testcaseRoutes({ store, emit, generator, lock }) {
   r.post('/apps/:appId/testcases', upload.single('file'), async (req, res, next) => {
     try {
       if (!req.file) return res.status(400).json({ error: 'Chưa chọn file' });
+      if ((await detectKind(req.file.path)) === 'manual') return res.status(400).json({ error: 'File này là test case manual. Chọn Import → File manual.' });
       const name = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
-      const out = await importTestcases({ store, appId: req.params.appId, srcPath: req.file.path, fileName: name });
+      const out = await importTestcases({ store, appId: req.params.appId, srcPath: req.file.path, fileName: name, into: req.body?.into || null });
       emit('app', { id: req.params.appId });
       res.json(out);
-    } catch (e) { next(e); }
+    } catch (e) {
+      if (e.match) return res.status(409).json({ error: e.message, match: e.match });
+      next(e);
+    }
   });
   // Xoá case: body { caseIds } | { file } | { all: true }. remove-plan = xem trước (số case, case Tiếp nối bị ảnh hưởng)
   r.post('/apps/:appId/cases/remove-plan', (req, res) => res.json(planRemoval(store, req.params.appId, req.body || {})));

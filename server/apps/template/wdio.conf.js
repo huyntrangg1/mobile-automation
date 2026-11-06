@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { beforeEachTest, buildHtml, writeEnv, writeHookFailure, writePlanned, writeResult } from './src/report/hooks.js';
+import { beforeEachTest, buildHtml, writeEnv, writeHookFailure, screenSummary, writePlanned, writeResult } from './src/report/hooks.js';
 import SkipReporter from './src/report/skipReporter.js';
 import { iosCaps } from './config/capabilities/ios.caps.js';
 
@@ -25,7 +25,8 @@ export const config = {
   capabilities: [iosCaps],
   framework: 'mocha',
   reporters: [['spec', { realtimeReporting: true }], [SkipReporter, { resultsDir: path.join(REPORTS, 'results') }]],
-  mochaOpts: { ui: 'bdd', timeout: 300000 },
+  // Sửa tay khi lỗi: case chờ tester trả lời → không giới hạn thời gian
+  mochaOpts: { ui: 'bdd', timeout: process.env.MANUAL_FIX === '1' ? 0 : 300000 },
   onPrepare() {
     for (const d of ['screenshots', 'results', 'evidence', 'bug-report.html', 'test-results.xlsx']) fs.rmSync(path.join(REPORTS, d), { recursive: true, force: true });
   },
@@ -33,14 +34,18 @@ export const config = {
   beforeTest() { beforeEachTest(); },
   async afterTest(test, ctx, result) {
     let shot = null;
+    let seen = null;
     if (!result.passed) {
+      seen = await screenSummary(); // màn đang hiện lúc fail → Actual của bug chặn luồng
       shot = path.join(REPORTS, 'screenshots', `${Date.now()}.png`);
       fs.mkdirSync(path.dirname(shot), { recursive: true });
       await browser.saveScreenshot(shot).catch(() => { shot = null; });
     }
-    writeResult(REPORTS, test, result, shot);
+    writeResult(REPORTS, test, result, shot, seen);
   },
   afterHook(test, ctx, result) { writeHookFailure(REPORTS, test, result); },
   after() { writePlanned(REPORTS); },
-  async onComplete() { await buildHtml(REPORTS, startedAt, { appName: process.env.APP_NAME || 'App', open: false }); },
+  async onComplete() {
+    await buildHtml(REPORTS, startedAt, { appName: process.env.APP_NAME || 'App', open: false });
+  },
 };

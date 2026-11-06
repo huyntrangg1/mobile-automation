@@ -1,14 +1,23 @@
 // Một job dùng simulator tại một thời điểm (lấy locator hoặc run).
-const JOB_COLS = ['runs', 'captures'];
+const JOB_COLS = ['runs', 'captures', 'smoke'];
 
 export function createLock() {
   let holder = null;
+  const listeners = [];
+  let settling = Promise.resolve();
   return {
     acquire(job) {
       if (holder) return { ok: false, holder: { ...holder } };
       holder = { ...job, since: new Date().toISOString() };
+      settling = Promise.all(listeners.map((fn) => Promise.resolve().then(() => fn({ ...holder })).catch(() => {})));
       return { ok: true };
     },
+    // Báo khi có job chiếm thiết bị (vd phiên thử locator đang giữ phải đóng trước khi Run / Lấy locator).
+    // fn trả promise được → job vừa chiếm thiết bị gọi ready() để chờ xong rồi mới mở phiên của mình
+    onAcquire(fn) {
+      listeners.push(fn);
+    },
+    ready: () => settling,
     release(id) {
       if (holder?.id === id) holder = null;
     },
