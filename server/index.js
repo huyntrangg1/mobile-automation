@@ -1,3 +1,4 @@
+import { realDeps } from './runs/preflight.js';
 import { createApp } from './app.js';
 import { createStore } from './store.js';
 import { createLock } from './lock.js';
@@ -24,7 +25,7 @@ for (const app of store.list('apps')) if (map.refreshElements(app.id) && app.wor
 const captures = createCaptures({ store, lock, emit, map, openSession, attachSession, loops: { explore: (...a) => exploreLoop(...a) } });
 const generator = createGenerator({ store, map, emit });
 const converter = createConverter({ store, map, emit, generator, dataDir: DATA });
-const runner = createRunner({ store, lock, emit, dataDir: DATA, scriptPath: generator.scriptPath });
+const runner = createRunner({ store, lock, emit, dataDir: DATA, scriptPath: generator.scriptPath, preflightDeps: ({ specPath, build }) => realDeps({ specPath, build }) });
 const tryLive = createTryLive({ store, lock, dataDir: DATA });
 const smoke = createSmoke({ store, lock, emit, dataDir: DATA });
 smoke.recover();

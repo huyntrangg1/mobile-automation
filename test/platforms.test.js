@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { readAppInfo, listDevices, sessionCaps, systemDialog } from '../server/device/platforms.js';
+import { readAppInfo, listDevices, sessionCaps, systemDialog, ensureSimulatorReady } from '../server/device/platforms.js';
 import { IK_FITNESS } from '../server/paths.js';
 
 const fx = (n) => fs.readFileSync(new URL(`./fixtures/${n}`, import.meta.url), 'utf8');
@@ -151,4 +151,15 @@ test('caps iOS: waitForQuiescence=false, reduceMotion, WDA thử lại 3 lần +
   assert.equal(realIosCaps({ bundleId: 'b' }, '00008120-001055C03C44A01E', 'TEAM123456')['appium:waitForQuiescence'], false);
   // Android không bị ảnh hưởng
   assert.equal(sessionCaps({ platform: 'Android', appPath: '/a.apk', bundleId: 'io.x' }, 'E')['appium:waitForQuiescence'], undefined);
+});
+
+test('ensureSimulatorReady: Simulator (UUID) → simctl bootstatus -b (boot nếu tắt, chờ tới khi sẵn sàng); máy thật / Android / UDID lạ thì bỏ qua; lỗi không ném', async () => {
+  const calls = [];
+  const exec = async (...a) => { calls.push(a); };
+  const sim = 'AEB04EEE-C04D-4DC5-856B-D6784E7B0FCB';
+  assert.equal(await ensureSimulatorReady(sim, { exec }), true);
+  assert.deepEqual(calls, [['xcrun', ['simctl', 'bootstatus', sim, '-b']]]);
+  for (const u of ['00008120-001055C03C44A01E', 'emulator-5554', 'U']) assert.equal(await ensureSimulatorReady(u, { exec }), false);
+  assert.equal(calls.length, 1);
+  assert.equal(await ensureSimulatorReady(sim, { exec: async () => { throw new Error('boom'); } }), false);
 });

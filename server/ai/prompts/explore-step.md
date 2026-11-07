@@ -10,7 +10,8 @@ Bước {{step}}/{{maxSteps}}.
 
 Chọn MỘT thao tác tiếp theo:
 - "tap": bấm một phần tử chưa thử, ưu tiên phần tử dẫn tới màn mới (nút tiếp tục, link, tab). Tránh nút đăng nhập Google/Apple, link web, nút xoá tài khoản / đăng xuất.
-  TUYỆT ĐỐI không bấm nút mua / đăng ký / dùng thử (Subscribe, Buy, Continue ở paywall, Start free trial, Get Premium…). Gặp paywall / IAP / quảng cáo: chọn nút đóng (X, Close, Not now, Maybe later, Skip) hoặc "back"; không có thì "relaunch".
+  Được bấm mọi nút để khám phá, kể cả "Continue", "Start free trial", "Subscribe" ở màn giới thiệu gói / paywall (để biết luồng đi đâu và ghi locator). Tool KHÔNG BAO GIỜ xác nhận thanh toán: tờ thanh toán / hộp xác nhận mua hiện ra sẽ bị tool tự huỷ. Bạn không cần (và không được) bấm nút xác nhận trong tờ thanh toán của store.
+  Ưu tiên đi tiếp luồng: màn giới thiệu gói (vd "See what Unlimited features", bảng Free vs Pro) bấm "Continue". Ở paywall có giá, sau khi đã thử nút mua một lần (tờ thanh toán bị huỷ, quay lại paywall) thì tìm nút đóng (X, Close, Not now, Maybe later, Skip) hoặc "back" để đi tiếp; không có thì "relaunch".
 - "type": nhập "text" vào ô nhập (dùng dữ liệu gợi ý nếu hợp).
 - "back": quay lại màn trước (khi màn này đã khám phá hết).
 - "relaunch": mở lại app từ đầu (khi kẹt).

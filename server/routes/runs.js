@@ -40,6 +40,10 @@ export default function runRoutes({ store, runner, generator, bugWriter = writeB
       res.status(e.status || 500).json({ error: e.message, missing: e.missing });
     }
   };
+  r.post('/apps/:appId/preflight', wrap(async (req, res) => {
+    const { udid, caseIds } = req.body || {};
+    res.json(await runner.check({ appId: req.params.appId, udid, caseIds }));
+  }));
   r.post('/apps/:appId/runs', wrap(async (req, res) => {
     const { udid, caseIds, manualFix } = req.body || {};
     await start(req.params.appId, udid, caseIds, res, manualFix);

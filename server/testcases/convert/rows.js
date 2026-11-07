@@ -24,7 +24,7 @@ export async function writeGroup({ skeleton, group, cases, runClaude, signal, fe
     fresh: Object.fromEntries(skeleton.order.filter((o) => group.includes(o.id)).map((o) => [o.id, o.fresh])),
     flows: Object.keys(skeleton.flows || {}),
     previousCase: prevId ? { id: prevId, scenario: byId.get(prevId)?.scenario } : null,
-    cases: group.map((id) => { const c = byId.get(id) || {}; return { id, scenario: c.scenario, description: c.description, pre: c.pre, steps: c.steps, expected: c.expected, platform: c.platform }; }),
+    cases: group.map((id) => { const c = byId.get(id) || {}; return { id, scenario: c.scenario, description: c.description, pre: c.pre, steps: c.steps, expected: c.expected, platform: c.platform, ...(c.clarification ? { clarification: c.clarification } : {}) }; }),
   };
   const prompt = JSON.stringify(message, null, 1) + (feedback ? `\n\nfeedback (lỗi lần trước, sửa đúng các case này):\n${feedback}` : '');
   const r = await runClaude({ system: systemPrompt(), prompt, schema: SCHEMA, noTools: true, timeoutMs: 600000, signal });

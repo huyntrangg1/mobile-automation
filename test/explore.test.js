@@ -246,3 +246,90 @@ test('tapAway: popup chỉ có chữ → chạm trên rồi dưới, hết thì 
   assert.equal(await tapAway(driver, { width: 1080, height: 2400 }, a), null);
   assert.deepEqual(calls.map((c) => c[0]), ['mobile: clickGesture', 'mobile: clickGesture']);
 });
+
+// ---- AI tự mò paywall: chữ "tiếp tục bản miễn phí", vuốt đóng tờ, nhờ AI nhìn ảnh khi code bó tay
+test('closeCandidates: link chữ "Continue with limited version" / "No thanks" (StaticText) cũng là nút đóng; "Continue" / "Start Free Trial" thì không', () => {
+  const els = [el('StaticText', 'Continue with limited version', 30, 800), el('StaticText', 'No thanks', 30, 840), el('Button', 'Continue', 30, 700), el('StaticText', 'Start Free Trial', 30, 760)];
+  assert.deepEqual(closeCandidates(els, { width: 400, height: 900 }).map((e) => e.name), ['Continue with limited version', 'No thanks']);
+});
+
+test('closeOverlay: hết nút và chạm mù thì vuốt xuống để đóng tờ (sheet) kéo được; vẫn chỉ một lần', async () => {
+  const els = [el('StaticText', 'Moss Pro:', 16, 348), el('StaticText', '$49.99', 154, 460), el('StaticText', 'Restore Purchase', 181, 652)];
+  const calls = [];
+  const driver = { execute: async (c, o) => { calls.push([c, o]); }, $: async () => ({ click: async () => { throw new Error('no'); } }) };
+  const args = { app: { platform: 'iOS', bundleId: 'b' }, win: { width: 400, height: 800 }, tried: new Set() };
+  assert.match(await closeOverlay(driver, els, args), /góc phải trên/);
+  assert.match(await closeOverlay(driver, els, args), /góc trái trên/);
+  assert.match(await closeOverlay(driver, els, args), /Vuốt xuống/);
+  const drag = calls.find((c) => c[0] === 'mobile: dragFromToForDuration');
+  assert.ok(drag && drag[1].toY > drag[1].fromY);
+  assert.equal(await closeOverlay(driver, els, args), null);
+});
+
+// Paywall mà code không đóng được (không nút, X vẽ bằng ảnh): AI nhìn ảnh rồi tự mò; chạm vào nút mua bị chặn
+const PW = (extra = '') => `<?xml version="1.0"?><AppiumAUT><XCUIElementTypeApplication type="XCUIElementTypeApplication" name="App" x="0" y="0" width="400" height="800">
+  <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" name="Go Premium" label="Go Premium" x="20" y="200" width="200" height="30" visible="true" enabled="true"/>
+  <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" name="$9.99 / month" label="$9.99 / month" x="20" y="260" width="200" height="30" visible="true" enabled="true"/>
+  <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" name="Start Free Trial" label="Start Free Trial" x="20" y="700" width="360" height="60" visible="true" enabled="true"/>${extra}</XCUIElementTypeApplication></AppiumAUT>`;
+test('paywall code không đóng được → AI nhìn ảnh (công cụ Read), tự mò chạm điểm; nút mua bị chặn, rồi đóng được thì khám phá đi tiếp', async () => {
+  const dataDir = tmpDir();
+  const store = createStore(dataDir);
+  store.put('apps', { id: 'ikf', workspace: tmpDir(), status: 'ready', bundleId: 'b', appPath: '/x.app' });
+  let page = 'paywall';
+  const touched = [];
+  const chain = { move: (p) => { touched.push(p); return chain; }, down: () => chain, pause: () => chain, up: () => chain, perform: async () => { if (touched.length && touched.at(-1).y < 100) page = 'home'; } };
+  const driver = {
+    getPageSource: async () => (page === 'paywall' ? PW() : fx('welcome')),
+    takeScreenshot: async () => Buffer.from('png').toString('base64'),
+    getWindowSize: async () => ({ width: 400, height: 800 }), getWindowRect: async () => ({ width: 400, height: 800 }),
+    pause: async () => {}, action: () => chain,
+    execute: async () => { throw new Error('x'); },
+    $: async () => ({ click: async () => { throw new Error('no'); }, setValue: async () => {}, waitForExist: async () => true }),
+  };
+  const calls = [];
+  const answers = [
+    { action: 'tapPoint', x: 50, y: 90, reason: 'thử nút Start Free Trial' }, // rơi vào nút mua → bị chặn
+    { action: 'tapPoint', x: 8, y: 6, reason: 'nút X mờ góc trên trái' },
+  ];
+  let ai = 0;
+  const runClaude = async (o) => {
+    calls.push(o);
+    if (o.prompt.includes('PAYWALL')) return { ok: true, data: answers[Math.min(ai++, answers.length - 1)] };
+    return { ok: true, data: { action: 'done', screenName: 'Home', reason: 'xong' } };
+  };
+  const caps = createCaptures({ store, lock: createLock(), emit: () => {}, map: createScreenMap({ store, dataDir }), openSession: async () => ({ driver, close: async () => {} }),
+    loops: { explore: (...args) => exploreLoop(...args, { runClaude, settleOpts: { pollMs: 1, quietMs: 5, maxMs: 30 } }) }, pollMs: 1 });
+  const id = await caps.start('ikf', { mode: 'explore', udid: 'U', maxSteps: 10 });
+  await until(() => store.get('captures', id).status !== 'running', 5000);
+  const pw = calls.filter((c) => c.prompt.includes('PAYWALL'));
+  assert.ok(pw.length >= 2);
+  assert.deepEqual(pw[0].allowedTools, ['Read']);
+  assert.equal(page, 'home'); // lần chạm 2 đóng được
+  assert.ok(!touched.some((p) => p.y >= 700), 'không được chạm vào nút Start Free Trial');
+  assert.match(store.get('captures', id).log.map((l) => (typeof l === 'string' ? l : l.text || l.msg || JSON.stringify(l))).join('\n'), /chặn thao tác của AI/);
+});
+
+test('prompt khám phá: được bấm mọi nút (kể cả Continue / mua ở màn gói) vì tool không bao giờ xác nhận thanh toán', () => {
+  const p = fs.readFileSync(new URL('../server/ai/prompts/explore-step.md', import.meta.url), 'utf8');
+  assert.match(p, /Được bấm mọi nút/);
+  assert.match(p, /KHÔNG BAO GIỜ xác nhận thanh toán/);
+  assert.doesNotMatch(p, /TUYỆT ĐỐI không bấm nút mua/);
+});
+
+// Được bấm nút mua để xem luồng đi đâu, nhưng KHÔNG BAO GIỜ xác nhận thanh toán: tờ / hộp xác nhận mua luôn bị huỷ
+import { dismissAlert } from '../server/locators/explore.js';
+test('dismissAlert iOS: hộp xác nhận mua → chọn Cancel; chỉ có nút mua → dismiss (không accept); hộp xin quyền như cũ', async () => {
+  const run = async (buttons) => {
+    const calls = [];
+    const driver = { execute: async (c, o) => { calls.push(o); if (o.action === 'getButtons') return buttons; } };
+    const r = await dismissAlert(driver, 'iOS');
+    return { r, act: calls.find((x) => x.action !== 'getButtons') };
+  };
+  let x = await run(['Subscribe', 'Cancel']);
+  assert.deepEqual(x.act, { action: 'accept', buttonLabel: 'Cancel' });
+  x = await run(['Confirm']);
+  assert.equal(x.act.action, 'dismiss');
+  assert.match(x.r, /không xác nhận/);
+  x = await run(['Allow', "Don't Allow"]);
+  assert.deepEqual(x.act, { action: 'accept', buttonLabel: "Don't Allow" });
+});

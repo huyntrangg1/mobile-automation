@@ -22,8 +22,8 @@ const ios = {
   // Chạy case để đưa app tới một màn rồi dùng tiếp: giữ hiệu ứng (REDUCE_MOTION=0), không tắt app khi xong (KEEP_APP_OPEN=1)
   'appium:reduceMotion': process.env.REDUCE_MOTION !== '0',
   ...(process.env.KEEP_APP_OPEN === '1' ? { 'appium:shouldTerminateApp': false } : {}),
-  'appium:language': 'en',
-  'appium:locale': 'en_US',
+  // KHÔNG đặt appium:language / appium:locale cho Simulator: Appium sẽ ghi lại ngôn ngữ rồi khởi động lại SpringBoard / tccd / akd,
+  // trên Simulator iOS 26 chưa có .GlobalPreferences.plist thì lệnh đó lỗi "'/bin/launchctl' failed with exit code 3" và session không mở được.
   'appium:wdaLaunchTimeout': 120000,
   'appium:newCommandTimeout': 240,
   'appium:settings[waitForIdleTimeout]': 1,

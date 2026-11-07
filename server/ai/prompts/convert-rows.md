@@ -6,6 +6,7 @@ Trả JSON `{ testcases: [{ id, fresh, pre, rows }] }`:
 - Mỗi id trong `group` xuất hiện đúng một lần, giữ nguyên TC ID. Không gộp case.
 - `pre`: mảng chuỗi điều hướng thuần từ nơi case trước kết thúc (hành động, không phải trạng thái); case `fresh` thì `pre` rỗng nếu đã có `Run flow`.
 - `rows`: mỗi dòng `{ step, screen, kind, keyword, target?, value?, compare?, label? }`; mọi Check có `label` tiếng Việt ngắn nêu thứ được kiểm (không nêu giá trị).
+- Nếu case có `clarification`: đó là câu trả lời ĐÃ XÁC NHẬN của người viết test case cho các điểm mờ (chữ chính xác, trạng thái bắt đầu, giá trị cụ thể). Dùng đúng, ưu tiên hơn mọi suy đoán; chữ trong `clarification` coi như chữ lấy từ manual (dùng `equals`).
 - Chữ (copy) lấy đúng từ nội dung manual; chữ không có trong manual là giả định → dùng `contains`.
 - Không viết ghi chú / giả định vào Target hay Value.
 

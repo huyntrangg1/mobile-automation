@@ -98,3 +98,18 @@ test('convert với body { gen: false } → không gen script', async (t) => {
   assert.equal(b.store.list('cases').length, 1);
   assert.equal(b.gen.length, 0);
 });
+
+test('PUT /manual/:id/clarify lưu câu trả lời (trả về brief cho case mờ); case lạ → 404', async () => {
+  const b = await boot();
+  const f = await makeManual(b.dir, { sheets: [{ name: 'Welcome', cases: [{ id: 'TC_W_001', priority: 'High', steps: 'Bước 1', pre: '', expected: 'Hiển thị màn chính' }] }] });
+  const mi = await (await upload(`${b.url}/apps/app1/manual/analyze`, f)).json();
+  assert.ok(mi.cases[0].brief);
+  const ok = await fetch(`${b.url}/manual/${mi.id}/clarify`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sheet: 'Welcome', tcId: 'TC_W_001', answers: { EMPTY_PRE: 'Cài lại app' } }) });
+  assert.equal(ok.status, 200);
+  const j = await ok.json();
+  assert.equal(j.cases[0].confirmed, true);
+  assert.deepEqual(j.cases[0].answers, { EMPTY_PRE: 'Cài lại app' });
+  const bad = await fetch(`${b.url}/manual/${mi.id}/clarify`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sheet: 'Welcome', tcId: 'NOPE', answers: {} }) });
+  assert.equal(bad.status, 404);
+  b.close();
+});

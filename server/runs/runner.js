@@ -6,7 +6,8 @@ import crypto from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { closure } from '../testcases/closure.js';
 import { WDA_DIR } from '../paths.js';
-import { androidEnv, deviceScreenshot, wdaInstalled } from '../device/platforms.js';
+import { androidEnv, deviceScreenshot, wdaInstalled, ensureSimulatorReady } from '../device/platforms.js';
+import { preflight } from './preflight.js';
 import { readHelp } from './help.js';
 
 const MAX_LOG = 2000;
@@ -108,7 +109,7 @@ export function formatLive(e, ctx = {}) {
 // — giữ dòng lỗi thật (khởi động phiên, lỗi không thuộc điểm kiểm) và dòng "Spec Files"
 export const NOISE = /Hook executed|operate on a modal dialog|^\[[^\]]+ #\d+-\d+\]|^\[\d+-\d+\] (RUNNING|PASSED|FAILED) in|^\s+at |AssertionError|^\s+- Step \d|^\s*actual\s+expected|^\s*(true|false)+\s*$|"spec" Reporter|^-{10,}\s*$/;
 
-export function createRunner({ store, lock, emit, dataDir, scriptPath, spawnImpl = spawn, screenshotImpl = deviceScreenshot, wdaCheck = wdaInstalled, shotMs = 1000, pollMs = 1000, killGraceMs = 15000 }) {
+export function createRunner({ store, lock, emit, dataDir, scriptPath, spawnImpl = spawn, screenshotImpl = deviceScreenshot, wdaCheck = wdaInstalled, prepareSim = ensureSimulatorReady, preflightDeps = null, shotMs = 1000, pollMs = 1000, killGraceMs = 15000 }) {
   const procs = new Map(); // runId → { proc, stopping }
 
   // Mã run tăng dần, không dùng lại mã của run đã xoá (giữ số cuối trong store "meta")
@@ -191,6 +192,12 @@ export function createRunner({ store, lock, emit, dataDir, scriptPath, spawnImpl
     const specs = files.map((f) => scriptPath(app, f));
     const noFile = specs.find((p) => !fs.existsSync(p));
     if (noFile) throw Object.assign(new Error(`Chưa có file script ${path.basename(noFile)} — gen script trước`), { status: 400 });
+    // Kiểm tra trước khi chạy: lỗi chặn (thiết bị không có, file app mất, script lỗi cú pháp) báo ngay, không chiếm thiết bị
+    if (preflightDeps) {
+      const pf = await preflight({ app, udid, runCases, deps: preflightDeps({ app, specPath: (f) => scriptPath(app, f), build: buildStamp(app.appPath)?.stamp || '' }) });
+      const fails = pf.items.filter((i) => i.status === 'fail');
+      if (fails.length) throw Object.assign(new Error(`Chưa chạy được: ${fails.map((i) => `${i.label}: ${i.detail}`).join('; ')}`), { status: 400, preflight: pf.items });
+    }
 
     const id = nextId();
     const got = lock.acquire({ kind: 'run', id, label: `Đang chạy ${id} · ${app.name}` });
@@ -229,6 +236,7 @@ export function createRunner({ store, lock, emit, dataDir, scriptPath, spawnImpl
       // Tìm phần tử lúc chạy theo mô tả (k gọi về server khi locator không thấy)
       QAPD_API: `http://127.0.0.1:${process.env.PORT || 5178}/api`, APP_ID: appId,
     };
+    if (platform === 'iOS') await prepareSim(udid);
     const proc = spawnImpl('npx', ['wdio', 'run', 'wdio.conf.js'], { cwd: app.workspace, env, stdio: ['ignore', 'pipe', 'pipe'] });
     const job = { proc, stopping: false, closed: false };
     procs.set(id, job);
@@ -387,5 +395,17 @@ export function createRunner({ store, lock, emit, dataDir, scriptPath, spawnImpl
     return { deleted, skipped };
   }
 
-  return { startRun, stop, pause, resume, answer, deleteRuns, nextRunId };
+  // Xem trước kết quả kiểm tra (màn Run hiện bảng ✓ / ⚠ / ✗ trước nút Start run)
+  async function check({ appId, udid, caseIds }) {
+    const app = store.get('apps', appId);
+    if (!app) throw Object.assign(new Error('Không có app này'), { status: 404 });
+    if (!preflightDeps || !udid) return { ok: true, items: [] };
+    const cases = store.list('cases').filter((c) => c.appId === appId);
+    const plan = closure(cases, caseIds || []);
+    const byId = new Map(cases.map((c) => [c.id, c]));
+    const runCases = plan.run.map((id) => byId.get(id)).filter(Boolean);
+    return preflight({ app, udid, runCases, deps: preflightDeps({ app, specPath: (f) => scriptPath(app, f), build: buildStamp(app.appPath)?.stamp || '' }) });
+  }
+
+  return { startRun, check, stop, pause, resume, answer, deleteRuns, nextRunId };
 }

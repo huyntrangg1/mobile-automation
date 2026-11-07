@@ -170,7 +170,7 @@ export function sessionCaps(app, udid) {
     platformName: 'iOS', 'appium:automationName': 'XCUITest', 'appium:udid': udid,
     'appium:app': app.appPath, 'appium:bundleId': app.bundleId, 'appium:noReset': false,
     'appium:derivedDataPath': WDA_DIR, 'appium:usePrebuiltWDA': fs.existsSync(path.join(WDA_DIR, 'Build/Products')),
-    'appium:language': 'en', 'appium:locale': 'en_US', 'appium:reduceMotion': true,
+    'appium:reduceMotion': true, // không đặt language / locale: xem ghi chú ở ios.caps.js (launchctl exit code 3 trên Simulator iOS 26)
     // Như framework của skill (Ctx.java, GUIDE §8): không chờ app "yên" (app có animation làm lệnh chậm / chụp giữa lúc chuyển động), WDA thử lại, timeout dài
     'appium:waitForQuiescence': false, 'appium:wdaStartupRetries': 3, 'appium:wdaStartupRetryInterval': 5000,
     'appium:wdaLaunchTimeout': 180000, 'appium:wdaConnectionTimeout': 180000, 'appium:newCommandTimeout': 600, 'appium:settings[waitForIdleTimeout]': 1,
@@ -205,6 +205,13 @@ export async function fixSimPlist(appPath, { exec = run } = {}) {
 // So mã băm thư viện WDA (Info.plist luôn "1.0 (1)"): WDA cũ do Appium / tool khác cài → false → xcodebuild cài lại bản đúng
 const WDA_LIB = 'PlugIns/WebDriverAgentRunner.xctest/Frameworks/WebDriverAgentLib.framework/WebDriverAgentLib';
 const sha1 = async (f) => crypto.createHash('sha1').update(await fs.promises.readFile(f)).digest('hex');
+// Simulator vừa bật còn dở dang thì Appium khởi động lại dịch vụ SpringBoard / tccd và gặp "'/bin/launchctl' failed with exit code 3".
+// bootstatus -b: bật nếu đang tắt và CHỜ tới khi hệ thống sẵn sàng (đã bật xong thì trả về ngay).
+export async function ensureSimulatorReady(udid, { exec = run } = {}) {
+  if (!/^[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}$/i.test(String(udid))) return false;
+  try { await exec('xcrun', ['simctl', 'bootstatus', udid, '-b']); return true; } catch { return false; }
+}
+
 export async function wdaInstalled(udid, { exec = run, wdaDir = WDA_DIR } = {}) {
   try {
     const installed = String(await exec('xcrun', ['simctl', 'get_app_container', udid, 'com.facebook.WebDriverAgentRunner.xctrunner', 'app'])).trim();

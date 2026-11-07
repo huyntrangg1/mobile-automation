@@ -22,7 +22,21 @@ const AUTO_PRE = /^\s*(\d+\.\s*)?(Cài lại app|Tiếp nối)/i;
 const INTERRUPTED = 'Bị gián đoạn (server khởi động lại giữa chừng) — import lại file hoặc bấm Chuyển đổi lại';
 
 // Bản gửi về trình duyệt (route + SSE): bỏ nội dung manual gốc (src) và dòng Keyword (plan) cho gọn
-export const viewOf = ({ skeletons, ...mi }) => ({ ...mi, cases: mi.cases.map(({ src, plan, ...c }) => c) });
+// Case có điểm mờ (và sẽ automate) kèm "brief" = phần nội dung manual cần để user trả lời điểm mờ
+export const viewOf = ({ skeletons, ...mi }) => ({
+  ...mi,
+  cases: mi.cases.map(({ src, plan, ...c }) => (c.ambiguity?.length && c.mode === 'automate' && src
+    ? { ...c, brief: { pre: src.pre || '', steps: src.steps || '', expected: src.expected || '' } } : c)),
+});
+
+const ANSWER_LABEL = { NO_QUOTED_EXPECTED: 'Chữ chính xác cần kiểm (Expected)', EMPTY_PRE: 'Trạng thái bắt đầu (Pre-condition)', VAGUE_STEP: 'Giá trị cụ thể cho bước còn chung chung' };
+const cleanAnswers = (a) => Object.fromEntries(Object.entries(a || {}).map(([k, v]) => [k, String(v ?? '').trim()]).filter(([, v]) => v));
+// Nội dung manual gửi cho AI: thêm câu trả lời đã được người viết test case xác nhận (ưu tiên hơn suy đoán)
+const srcWithAnswers = (c) => {
+  const a = cleanAnswers(c.answers);
+  const keys = Object.keys(a);
+  return keys.length ? { ...c.src, clarification: keys.map((k) => `${ANSWER_LABEL[k] || k}: ${a[k]}`).join('\n') } : c.src;
+};
 
 export function createConverter({ store, map, emit, generator, importer = importTestcases, runClaude = defaultRunClaude, dataDir }) {
   const running = new Map(); // importId → 'analyzing' | 'converting'
@@ -141,6 +155,46 @@ export function createConverter({ store, map, emit, generator, importer = import
     return save(mi);
   }
 
+  // User trả lời điểm mờ (TRƯỚC khi chuyển đổi, hoặc SAU khi đã chuyển): lưu câu trả lời; đổi câu trả lời của case đã chuyển → chỉ case đó chờ chuyển lại
+  function clarify(importId, { sheet, tcId, answers }) {
+    idle(importId);
+    const mi = need(importId);
+    const c = mi.cases.find(same(sheet, tcId));
+    if (!c) throw fail(404, 'Không có case này trong file');
+    const next = cleanAnswers(answers);
+    const changed = JSON.stringify(next) !== JSON.stringify(cleanAnswers(c.answers));
+    c.answers = next;
+    c.confirmed = true;
+    if (changed && c.state === 'converted' && c.mode === 'automate') { c.state = 'pending'; delete c.plan; delete c.cached; }
+    return save(mi);
+  }
+
+  // AI đọc locator map (chữ / tên phần tử đã lấy trên các màn) điền sẵn gợi ý cho điểm mờ; user chỉ duyệt hoặc sửa
+  async function suggest(importId) {
+    lock(importId, 'analyzing');
+    try {
+      const mi = need(importId);
+      const todo = mi.cases.filter((c) => c.mode === 'automate' && c.ambiguity?.length && !c.suggest && !Object.keys(cleanAnswers(c.answers)).length);
+      if (!todo.length) return mi;
+      const table = map.locatorTable(mi.appId) || {};
+      const screens = Object.fromEntries(Object.entries(table).map(([n, rows]) => [n, (rows || []).slice(0, 40).map((r) => r.key)]));
+      const prompt = `Locator map của app (tên màn → tên phần tử / chữ đã lấy được):\n${JSON.stringify(screens)}\n\nCác case có điểm mờ:\n${JSON.stringify(todo.map((c) => ({ id: c.id, scenario: c.title, pre: c.src.pre, steps: c.src.steps, expected: c.src.expected, ambiguity: c.ambiguity.map((a) => ({ code: a.code, text: a.text })) })), null, 1)}\n\nVới MỖI case và MỖI mã điểm mờ của nó, đề xuất câu trả lời ngắn: NO_QUOTED_EXPECTED = chữ chính xác trên màn (chỉ dùng chữ có trong locator map hoặc trong nội dung case, không bịa), EMPTY_PRE = trạng thái bắt đầu (cài lại app hay tiếp nối case trước), VAGUE_STEP = giá trị cụ thể để nhập / kiểm. Không chắc thì để chuỗi rỗng.`;
+      const r = await runClaude({
+        prompt, noTools: true, timeoutMs: 300000,
+        schema: { type: 'object', properties: { suggestions: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, answers: { type: 'object', additionalProperties: { type: 'string' } } }, required: ['id', 'answers'] } } }, required: ['suggestions'] },
+      });
+      if (!r.ok) throw fail(502, `AI gợi ý lỗi: ${r.error}`);
+      for (const s of r.data?.suggestions || []) {
+        const c = todo.find((x) => x.id === s.id);
+        if (c) c.suggest = cleanAnswers(s.answers);
+      }
+      for (const c of todo) c.suggest ||= {};
+      return save(mi);
+    } finally {
+      running.delete(importId);
+    }
+  }
+
   function resolveConflict(importId, { sheet, tcId }, action) {
     idle(importId);
     const mi = need(importId);
@@ -197,10 +251,10 @@ export function createConverter({ store, map, emit, generator, importer = import
         // Dùng lại plan đã có: case đã chuyển xong, hoặc nhóm tốt của lần trước bị lỗi giữa chừng (cached)
         const cache = Object.fromEntries(entries.filter((c) => c.mode === 'automate' && c.plan && (c.state === 'converted' || c.cached)).map((c) => [c.id, c.plan]));
         // Khung đã lập chỉ dùng lại khi danh sách case automate của sheet (id + nội dung) không đổi
-        const sig = sha(entries.filter((c) => c.mode === 'automate').map((c) => [c.id, c.hash]));
+        const sig = sha(entries.filter((c) => c.mode === 'automate').map((c) => [c.id, c.hash, cleanAnswers(c.answers)]));
         const saved = mi.skeletons?.[sheet];
         const r = await convertSheet({
-          sheet: { sheet, cases: entries.map((c) => c.src) }, decisions: entries.map((c) => ({ id: c.id, mode: c.mode, reason: c.reason })), runClaude, cache,
+          sheet: { sheet, cases: entries.map(srcWithAnswers) }, decisions: entries.map((c) => ({ id: c.id, mode: c.mode, reason: c.reason })), runClaude, cache,
           skeleton: saved?.sig === sig ? saved.skeleton : undefined,
           onSkeleton: (skeleton) => { (mi.skeletons ||= {})[sheet] = { sig, skeleton }; save(mi); },
           onGroup: (tcs) => { for (const t of tcs) { const c = entries.find((x) => x.id === t.id && x.mode === 'automate'); if (c && c.state !== 'converted') Object.assign(c, { plan: t, cached: true }); } save(mi); },
@@ -258,5 +312,5 @@ export function createConverter({ store, map, emit, generator, importer = import
     }
   }
 
-  return { idFor, analyze, choose, convert, resolveConflict, busy: (id) => running.has(id), get: (id) => store.get('manualImports', id), list: (appId) => store.list('manualImports').filter((m) => m.appId === appId) };
+  return { idFor, analyze, choose, clarify, suggest, convert, resolveConflict, busy: (id) => running.has(id), get: (id) => store.get('manualImports', id), list: (appId) => store.list('manualImports').filter((m) => m.appId === appId) };
 }

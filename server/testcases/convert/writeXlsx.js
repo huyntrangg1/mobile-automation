@@ -43,6 +43,58 @@ export async function writePlan({ plan, sheet, outDir }) {
 // Số nhóm viết dòng Keyword chạy cùng lúc (QAPD_CONVERT_CONCURRENCY để đổi)
 const DEFAULT_CONCURRENCY = Number(process.env.QAPD_CONVERT_CONCURRENCY) || 5;
 
+// AI hay ghi nhầm cột Kind / Keyword (vd kind "verify", keyword "Nav"); sửa các nhầm lẫn chắc chắn bằng code thay vì nhờ AI viết lại
+const KINDS = { action: 'Action', nav: 'Nav', check: 'Check', case: 'Case' };
+export function fixRow(r) {
+  if (!r || typeof r !== 'object') return r;
+  let { kind, keyword, target } = r;
+  const kw = String(keyword || '').trim();
+  kind = KINDS[String(kind || '').trim().toLowerCase()] || kind;
+  if (/^nav$/i.test(kw)) { kind = 'Nav'; keyword = 'Verify screen'; }
+  // Kind không thuộc Action / Nav / Check (AI hay ghi "Verify") → suy ra từ keyword: Verify screen = Nav, Verify … / Run check = Check, còn lại = Action
+  if (!['Action', 'Nav', 'Check', 'Case'].includes(kind) && kw) kind = /^verify screen$/i.test(kw) ? 'Nav' : /^(verify |run check$)/i.test(kw) ? 'Check' : 'Action';
+  if (kind === 'Nav' && !String(target || '').trim() && r.screen) target = r.screen; // Verify screen cần Target = tên màn
+  // Keyword gần đúng (AI hay viết "Verify element visible") → keyword chuẩn
+  if (kind === 'Check') {
+    if (/^verify (element )?(not )(visible|displayed|shown)$/i.test(String(keyword || '').trim())) keyword = 'Verify not displayed';
+    else if (/^verify (element )?(visible|displayed|shown|present|exists?)$/i.test(String(keyword || '').trim())) keyword = 'Verify displayed';
+  }
+  return { ...r, kind, keyword, ...(target !== undefined || kind === 'Nav' ? { target } : {}) };
+}
+// Dòng Check của luồng chung bắt buộc có Check label: AI hay bỏ trống → lấy từ target, rồi tới tên màn
+export function fixFlowRow(row) {
+  const r = fixRow(row);
+  if (r && r.kind === 'Check' && !String(r.label || '').trim()) {
+    const label = String(r.target || '').trim() || String(r.screen || '').trim();
+    if (label) return { ...r, label };
+  }
+  if (r && r.keyword === 'Handle permission' && !String(r.value || '').trim()) return { ...r, value: 'Allow' }; // tool luôn cho phép quyền
+  return r;
+}
+// Sau mỗi Verify screen phải có một check dương riêng của màn (write.mjs bắt buộc, không thì app treo / sai màn vẫn pass).
+// AI hay bỏ sót → thêm Verify displayed theo chính tên màn (cùng target với dòng Verify screen nên cùng cách tìm phần tử), rồi đánh lại số step.
+export function fixFlowRows(rows) {
+  if (!Array.isArray(rows)) return rows;
+  const fixed = rows.map(fixFlowRow);
+  const out = [];
+  fixed.forEach((r, i) => {
+    out.push(r);
+    if (r?.kind !== 'Nav') return;
+    let ok = false;
+    for (let j = i + 1; j < fixed.length && fixed[j]?.kind === 'Check'; j++) if (fixed[j].screen === r.screen && fixed[j].keyword !== 'Verify not displayed') ok = true;
+    if (!ok) out.push({ step: 0, screen: r.screen, kind: 'Check', keyword: 'Verify displayed', target: r.target || r.screen, label: `Màn ${r.screen} hiển thị` });
+  });
+  return out.map((r, i) => ({ ...r, step: i + 1 }));
+}
+const fixFlows = (flows) => Object.fromEntries(Object.entries(flows || {}).map(([n, rows]) => [n, Array.isArray(rows) ? fixFlowRows(rows) : rows]));
+
+// Kiểm luồng dùng chung ngay sau khi lập khung (trước khi tốn 40+ lần gọi AI viết nhóm): chạy write.mjs với plan chỉ có flows
+export async function checkFlows({ flows, sheet, outDir }) {
+  if (!Object.keys(flows || {}).length) return [];
+  const r = await writePlan({ plan: { testcases: [], flows, testdata: [], manual: [] }, sheet: { sheet: sheet.sheet, cases: [] }, outDir: path.join(os.tmpdir(), `qapd-flowchk-${process.pid}`) });
+  return r.problems.filter((p) => !/khai báo nhưng không TC nào dùng/.test(p));
+}
+
 async function pool(items, n, fn) {
   const out = new Array(items.length);
   let next = 0;
@@ -65,10 +117,20 @@ export async function convertSheet({ sheet, decisions, runClaude, outDir, maxFix
   if (signal?.aborted) return stopped();
 
   onProgress({ done: 0, total: 1, label: given ? `Dùng lại khung đã lập cho sheet ${sheet.sheet}` : `Lập khung sheet ${sheet.sheet}` });
-  const sk = given ? { ok: true, skeleton: given } : await buildSkeleton({ sheet: sheet.sheet, cases: auto, runClaude, signal });
+  let sk = given ? { ok: true, skeleton: given } : await buildSkeleton({ sheet: sheet.sheet, cases: auto, runClaude, signal });
   if (!sk.ok) return { ok: false, files: [], plans: {}, problems: [sk.error], review: [] };
-  const { skeleton } = sk;
-  if (!given) onSkeleton(skeleton);
+  let skeleton = { ...sk.skeleton, flows: fixFlows(sk.skeleton.flows) };
+  // Luồng chung sai thì mọi nhóm dựa vào nó đều lỗi: sửa ngay (1 lần nhờ AI lập lại khung), không để tới bước kiểm cuối
+  let flowProblems = await checkFlows({ flows: skeleton.flows, sheet });
+  let rebuilt = false;
+  // Nhờ AI lập lại khung tối đa 2 lần, mỗi lần kèm đúng danh sách lỗi còn lại (lần 1 thường chưa sửa hết)
+  for (let attempt = 0; attempt < 2 && flowProblems.length && !signal?.aborted; attempt++) {
+    const again = await buildSkeleton({ sheet: sheet.sheet, cases: auto, runClaude, signal, feedback: flowProblems.join('\n') });
+    if (!again.ok) break;
+    skeleton = { ...again.skeleton, flows: fixFlows(again.skeleton.flows) }; rebuilt = true; flowProblems = await checkFlows({ flows: skeleton.flows, sheet });
+  }
+  if (flowProblems.length) return { ok: false, files: [], plans: {}, problems: flowProblems.map((p) => `Khung: ${p}`), review: [] };
+  if (!given || rebuilt) onSkeleton(skeleton);
   const freshOf = new Map(skeleton.order.map((o) => [o.id, o.fresh]));
   const results = new Map(); // id → PlanTc
   let done = 0;
@@ -82,7 +144,7 @@ export async function convertSheet({ sheet, decisions, runClaude, outDir, maxFix
     for (let attempt = 0; attempt <= maxFix; attempt++) {
       if (signal?.aborted) return 'Đã dừng chuyển đổi';
       const r = await writeGroup({ skeleton, group, cases: auto, runClaude, signal, feedback: fb });
-      if (r.ok) { r.testcases.forEach((t) => results.set(t.id, t)); onGroup(r.testcases); return null; }
+      if (r.ok) { r.testcases.forEach((t) => { t.rows = (t.rows || []).map(fixRow); results.set(t.id, t); }); onGroup(r.testcases); return null; }
       error = r.error;
       fb = r.error;
     }
@@ -90,9 +152,12 @@ export async function convertSheet({ sheet, decisions, runClaude, outDir, maxFix
   };
 
   const groupErrors = (await pool(skeleton.groups, concurrency, async (group) => {
-    const reusable = group.every((id) => cache[id] && cache[id].fresh === freshOf.get(id));
-    if (reusable) { group.forEach((id) => results.set(id, cache[id])); tick(`Dùng lại nhóm ${group[0]}…`); return null; }
-    const e = await runGroup(group);
+    // Chỉ viết lại các case chưa có plan dùng được (vd vừa đổi câu trả lời điểm mờ); case còn lại của nhóm dùng lại plan cũ
+    const usable = (id) => cache[id] && cache[id].fresh === freshOf.get(id);
+    const need = group.filter((id) => !usable(id));
+    group.filter(usable).forEach((id) => results.set(id, cache[id]));
+    if (!need.length) { tick(`Dùng lại nhóm ${group[0]}…`); return null; }
+    const e = await runGroup(need);
     tick(`Đã viết nhóm ${group[0]}…`);
     return e;
   })).filter(Boolean);
@@ -110,8 +175,10 @@ export async function convertSheet({ sheet, decisions, runClaude, outDir, maxFix
     // Viết lại đúng các nhóm có case bị nhắc trong lỗi (không nhắc case nào → viết lại tất cả)
     const mentioned = (g) => last.problems.filter((p) => g.some((id) => p.includes(id)));
     const hit = skeleton.groups.filter((g) => mentioned(g).length);
-    const redo = hit.length ? hit : skeleton.groups;
-    const errs = (await pool(redo, concurrency, (g) => runGroup(g, (hit.length ? mentioned(g) : last.problems).join('\n')))).filter(Boolean);
+    // Lỗi không nhắc case nào = lỗi nằm trong luồng dùng chung của khung; viết lại nhóm không sửa được nó, đừng đốt 40+ lần gọi AI vô ích
+    if (!hit.length) break;
+    const redo = hit;
+    const errs = (await pool(redo, concurrency, (g) => runGroup(g, mentioned(g).join('\n')))).filter(Boolean);
     if (errs.length) return { ok: false, files: [], plans: plans(), problems: errs, review: [] };
   }
   return { ok: false, files: last.files, plans: plans(), problems: last.problems, review: last.review };

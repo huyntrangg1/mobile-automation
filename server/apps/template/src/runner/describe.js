@@ -3,7 +3,8 @@ import { fill } from '../../data/loaders/testcase-v2.js';
 
 const PLATFORM = process.env.PLATFORM || 'iOS';
 export const runsHere = (r) => !r.platform || r.platform === 'All' || r.platform === PLATFORM;
-export const startScreen = (tc) => tc.rows.find(runsHere)?.screen;
+// Màn bắt đầu = màn của dòng đầu tiên CÓ tên màn (dòng Launch fresh / Run flow thường để trống cột Screen)
+export const startScreen = (tc) => tc.rows.find((r) => runsHere(r) && String(r.screen || '').trim())?.screen;
 
 export function describeCase(tc, data = {}) {
   const v = (x) => { try { return fill(x, data); } catch { return x; } };

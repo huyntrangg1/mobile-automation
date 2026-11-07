@@ -126,10 +126,13 @@ export function TestCases({ apps }) {
     const m = {};
     const t = (r) => new Date(r.startedAt || 0).getTime();
     [...runs].sort((a, b) => t(a) - t(b)).forEach((r) => {
-      for (const [tc, v] of Object.entries(r.results || {})) {
-        if (['notrun', 'queued', 'running'].includes(v.status)) continue; // chưa chạy thật thì không tính là kết quả
-        m[tc] = { s: v.status, run: r.id, at: t(r) };
-      }
+      // results theo TC ID; caseIds[i] ↔ order[i] cho biết case thuộc file nào. Hai file có TC ID trùng không được lẫn kết quả → khoá theo id đầy đủ (app:file:TC)
+      (r.order || Object.keys(r.results || {})).forEach((tc, i) => {
+        const v = (r.results || {})[tc];
+        if (!v || ['notrun', 'queued', 'running'].includes(v.status)) return; // chưa chạy thật thì không tính là kết quả
+        const key = r.caseIds?.[i] || `${r.appId}:${tc}`;
+        m[key] = { s: v.status, run: r.id, at: t(r) };
+      });
     });
     return m;
   }, [runs]);
@@ -148,11 +151,11 @@ export function TestCases({ apps }) {
     return m;
   }, [cases]);
   const hasLoc = (c) => locInfo[c.id] && (locInfo[c.id].miss.length > 0 || locInfo[c.id].els.length > 0);
-  const isAttn = (c) => ['failed', 'blocked'].includes(lastMap[c.tcId]?.s);
+  const isAttn = (c) => ['failed', 'blocked'].includes(lastMap[c.id]?.s);
   const fileStat = (list) => {
     const st = { n: list.length, p: 0, f: 0, s: 0, ran: 0, gen: 0 };
     for (const c of list) {
-      const r = lastMap[c.tcId]?.s;
+      const r = lastMap[c.id]?.s;
       if (r) st.ran++;
       if (r === 'passed') st.p++; else if (r === 'failed') st.f++; else if (r) st.s++;
       if (c.script.status === 'generated') st.gen++;
@@ -175,7 +178,7 @@ export function TestCases({ apps }) {
   }, [inFile, locInfo]);
   const genN = (cases || []).filter((c) => c.script.status === 'generating').length;
   const shown = inFile.filter((c) => (!filter
-    || (filter === 'warn' ? hasLoc(c) : filter === 'attn' ? isAttn(c) : filter === 'pass' ? lastMap[c.tcId]?.s === 'passed' : c.script.status === filter))
+    || (filter === 'warn' ? hasLoc(c) : filter === 'attn' ? isAttn(c) : filter === 'pass' ? lastMap[c.id]?.s === 'passed' : c.script.status === filter))
     && (!q || `${c.tcId} ${c.title}`.toLowerCase().includes(q.toLowerCase())));
   const groups = useMemo(() => {
     const g = new Map();
@@ -208,7 +211,7 @@ export function TestCases({ apps }) {
   };
   const RES = { passed: ['pass', 'Pass'], failed: ['fail', 'Fail'], blocked: ['blk', 'Blocked'], skipped: ['', 'Skipped'] };
   const resCell = (c) => {
-    const r = lastMap[c.tcId];
+    const r = lastMap[c.id];
     if (!r) return <span className="dotl none">Chưa chạy</span>;
     const [cls, label] = RES[r.s] || ['', r.s];
     return <span className={`dotl ${cls}`}>{label}<Link to={`/runs/${r.run}`} className="cap tc-run">{r.run.replace('RUN-0', '#')}</Link></span>;
@@ -291,7 +294,7 @@ export function TestCases({ apps }) {
             </div>
             <div className="summary-line num">
               {curSt.ran ? <><span><b>{curSt.p}</b> pass</span><span><b className="fail-n">{curSt.f}</b> fail</span><span><b>{curSt.s}</b> skip / blocked</span></> : <span>Chưa chạy lần nào</span>}
-              {inFile.some((c) => lastMap[c.tcId]) && <span className="muted">· Run gần nhất {inFile.map((c) => lastMap[c.tcId]).filter(Boolean).sort((a, b) => (b.at || 0) - (a.at || 0))[0].run}</span>}
+              {inFile.some((c) => lastMap[c.id]) && <span className="muted">· Run gần nhất {inFile.map((c) => lastMap[c.id]).filter(Boolean).sort((a, b) => (b.at || 0) - (a.at || 0))[0].run}</span>}
             </div>
             {missScreens.length > 0 && (
               <div className="alert alert-warn loc-banner">

@@ -5,7 +5,8 @@
 const PRICE = /[$€£₫¥]\s?\d|\d\s?[$€£₫¥]|\d+[.,]\d{2}\s?(usd|eur|vnd)|\bper (week|month|year)\b|\/\s?(wk|week|mo|month|yr|year)\b/i;
 const OFFER = /\b(free trial|subscribe|subscription|premium|upgrade|unlock all|restore purchases?|best value|billed|cancel anytime)\b/i;
 // Chữ trên nút đóng của paywall / quảng cáo — KHÔNG gồm Done / Continue / Restore (có thể là mua hoặc đi tiếp luồng thật)
-const CLOSE_NAME = /^(close|x|✕|✖|×|dismiss|not now|maybe later|no,? thanks?|skip|skip ad|close ad|cancel|later|đóng|bỏ qua|để sau|không,? cảm ơn)$/i;
+const CLOSE_NAME = /^(close|x|✕|✖|×|dismiss|not now|maybe later|no,? thanks?|skip|skip ad|close ad|cancel|later|đóng|bỏ qua|để sau|không,? cảm ơn|skip for now|(continue|proceed) (with|using) (the )?(limited|free|basic)( version)?|use (the )?free version|no,? thanks?,? (continue|maybe later))$/i;
+export const isCloseName = (name) => CLOSE_NAME.test(String(name || '').trim());
 // Nút của tờ thanh toán store — chỉ bấm được Cancel
 const STORE_CANCEL = /^(cancel|hủy|huỷ|not now)$/i;
 // Nút trông như mua: tuyệt đối không bấm khi đang đóng overlay
@@ -24,7 +25,8 @@ export function looksLikePaywall(els) {
 
 // Ứng viên nút đóng, ưu tiên: nút có tên khớp CLOSE_NAME → nút không tên ở mép trên màn (X vẽ bằng icon), góc phải trước rồi góc trái
 export function closeCandidates(els, win = { width: 400, height: 900 }) {
-  const named = els.filter((e) => e.type === 'Button' && e.enabled && CLOSE_NAME.test((e.name || e.label || '').trim()));
+  // Nút đóng có tên: Button, hoặc link chữ (paywall hay vẽ "No thanks" bằng StaticText / Link / Other)
+  const named = els.filter((e) => ['Button', 'StaticText', 'Link', 'Other'].includes(e.type) && e.enabled && CLOSE_NAME.test((e.name || e.label || '').trim()));
   const top = win.height * 0.18;
   const small = (e) => e.rect.width > 0 && e.rect.width <= 90 && e.rect.height <= 90;
   const corner = els
@@ -106,6 +108,19 @@ export async function closeOverlay(driver, els, { app, win, tried = new Set() } 
       tried.add(k);
       try { await tapPoint(driver, android, px, y); return `Chạm ${label} (${px},${y}) — nút X không có trong cây phần tử`; } catch {}
     }
+  }
+
+  // 2c. Tờ (sheet) kéo được: vuốt từ giữa màn xuống dưới để đóng
+  if (win?.width && !tried.has('<swipe-down>')) {
+    tried.add('<swipe-down>');
+    try {
+      const x = Math.round(win.width / 2);
+      const fromY = Math.round(win.height * 0.35);
+      const toY = Math.round(win.height * 0.92);
+      if (android) await driver.execute('mobile: swipeGesture', { left: 0, top: fromY, width: win.width, height: toY - fromY, direction: 'down', percent: 0.9 });
+      else await driver.execute('mobile: dragFromToForDuration', { duration: 0.3, fromX: x, fromY, toX: x, toY });
+      return 'Vuốt xuống để đóng tờ';
+    } catch {}
   }
 
   // 3. Android: nút Back hệ thống đóng được hầu hết paywall / quảng cáo / bottom sheet

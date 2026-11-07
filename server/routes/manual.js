@@ -30,6 +30,17 @@ export default function manualRoutes({ store, converter }) {
     need(req.params.id);
     res.json(view(converter.choose(req.params.id, { sheet, tcId, mode })));
   }));
+  // Trả lời điểm mờ — trước hoặc sau khi chuyển đổi (case đã chuyển mà đổi câu trả lời thì chờ chuyển lại riêng)
+  r.put('/manual/:id/clarify', wrap(async (req, res) => {
+    const { sheet, tcId, answers } = req.body || {};
+    need(req.params.id);
+    res.json(view(converter.clarify(req.params.id, { sheet, tcId, answers })));
+  }));
+  // AI điền sẵn gợi ý cho các điểm mờ chưa trả lời (đọc locator map); user chỉ duyệt / sửa
+  r.post('/manual/:id/suggest', wrap(async (req, res) => {
+    need(req.params.id);
+    res.json(view(await converter.suggest(req.params.id)));
+  }));
   r.post('/manual/:id/convert', wrap(async (req, res) => {
     const mi = need(req.params.id);
     if (converter.busy(mi.id)) return res.status(409).json({ error: 'Đang xử lý file này — đợi xong rồi thử lại' });

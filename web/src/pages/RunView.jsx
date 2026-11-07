@@ -160,7 +160,7 @@ export function RunView({ lock, setCurrentApp }) {
                 const s = stat(id);
                 const [g, gc] = GLYPH[s] || ['·', 'dim'];
                 return (
-                  <div key={id} className={`rv-row${pick[id] ? ' sel' : ''}`}>
+                  <div key={id} className={`rv-row${pick[id] ? ' picked' : ''}`}>
                     {!running && <input className="cb" type="checkbox" aria-label={`Chọn ${id} để chạy lại`} checked={!!pick[id]} onChange={(e) => setPick({ ...pick, [id]: e.target.checked })} />}
                     <button type="button" className="rv-item" aria-current={id === sel ? 'true' : undefined} onClick={() => setSelId(id)}>
                       <span className={`rv-mk ${gc}`} aria-label={s}>{g}</span>

@@ -120,6 +120,20 @@ const chainBefore = (tc) => {
   return out;
 };
 const silent = { eq() {}, assertAll() {} };
+// Phiên Appium chết giữa chừng (app / WebDriverAgent treo quá lâu, hết newCommandTimeout…): mọi case sau đều báo "session is either terminated or not started"
+// và bị Blocked hàng loạt. Kiểm phiên còn sống trước mỗi case; chết thì tạo lại phiên (app lúc này ở trạng thái không rõ → case Tiếp nối đi đường cài lại app + điều hướng).
+const DEAD_SESSION = /session is either terminated or not started|invalid session id|no such session|session not created|socket hang up|ECONNREFUSED/i;
+async function ensureSession(say) {
+  try { await driver.getWindowRect(); return false; } catch (e) {
+    if (!DEAD_SESSION.test(String((e && e.message) || e))) return false;
+    // Hỏi lại một lần sau 1s: lỗi kết nối thoáng qua không phải phiên chết (tạo lại phiên tốn thời gian và mở lại app)
+    await new Promise((r) => setTimeout(r, 1000));
+    try { await driver.getWindowRect(); return false; } catch (e2) { if (!DEAD_SESSION.test(String((e2 && e2.message) || e2))) return false; }
+    say('Phiên Appium đã chết — tạo lại phiên');
+    await driver.reloadSession();
+    return true;
+  }
+}
 async function recoverTo(tc, say) {
   const chain = chainBefore(tc);
   const root = chain[0] || tc;
@@ -144,7 +158,7 @@ async function navigateStart(tc, meta, say) {
   const root = chainBefore(tc)[0];
   const from = root?.fresh ? startScreen(root) : null;
   const to = startScreen(tc);
-  if (!from || !to) return false;
+  if (!from || !to) { say('Không biết màn bắt đầu của ' + (!from ? (root ? root.id : 'case đầu chuỗi') : tc.id) + ' (cột Screen trống) — không điều hướng được, giữ Blocked'); return false; }
   const route = findPath(from, to);
   if (!route) { say('Không có đường đi từ màn ' + from + ' tới màn ' + to + ' trong sơ đồ màn của build này — giữ Blocked'); return false; }
   const skipped = blockedBy;
@@ -196,6 +210,7 @@ describe(SUITE, () => {
       if (CASE_MS) this.timeout((CASE_MS + 150000) * (1 + RECOVER * (1 + chainBefore(tc).length)) + 300000);
       guardGlobals();
       const say = (text) => live({ type: 'info', tc: tc.id, text });
+      if (await ensureSession(say)) { if (!tc.fresh) blockedBy = blockedBy || 'phiên Appium bị mất'; }
       if (blockedBy && !(await navigateStart(tc, meta, say))) throw new Error(\`TC trước bị chặn (\${blockedBy}) nên app không ở đúng trạng thái để chạy tiếp\`);
       if (!CASES[tc.id]) { blockedBy = tc.id; throw new Error(\`Chưa có script cho \${tc.id} trong file — gen script trước khi chạy\`); }
       let sa;
@@ -221,6 +236,7 @@ ${pack === 'ik-fitness' ? '          if (tc.fresh) await ensureAccounts(tc);\n' 
           if (e.name !== 'AssertionError' && attempt < RECOVER) {
             say(\`Lỗi: \${String(e.message || e).split('\\n')[0]} — thử phục hồi (lần \${attempt + 1}/\${RECOVER})\`);
             try {
+              await ensureSession(say);
               await recoverTo(tc, say);
               resetCurrent();
               setCase(meta);

@@ -23,14 +23,21 @@ export async function handleSystemAlert(timeout = 4000) {
   return false;
 }
 
+// Một lệnh WebDriverAgent có thể treo hàng chục phút (app / hộp thoại hệ thống chặn snapshot) rồi phiên Appium chết → mọi case sau Blocked.
+// Bọc mỗi lệnh quan trọng bằng giới hạn thời gian để case báo lỗi sớm và tự phục hồi được.
+const within = (p, ms, what) => {
+  let timer;
+  return Promise.race([p, new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`${what} quá ${Math.round(ms / 1000)}s không phản hồi`)), ms); })]).finally(() => clearTimeout(timer));
+};
+
 // Chờ app lên trước màn hình (queryAppState 4 = đang chạy foreground), rồi chờ màn ổn định (2 lần đọc page source giống nhau)
 // — thay cho chờ cứng: app mở nhanh thì đi tiếp ngay, splash dài thì vẫn đợi (tối đa maxMs)
-async function waitAppReady(id, maxMs = 8000) {
+async function waitAppReady(id, maxMs = 8000, stepMs = 20000) {
   const end = Date.now() + maxMs;
-  while (Date.now() < end && (await driver.execute('mobile: queryAppState', id).catch(() => 4)) !== 4) await driver.pause(200);
+  while (Date.now() < end && (await within(driver.execute('mobile: queryAppState', id), stepMs, 'queryAppState').catch(() => 4)) !== 4) await driver.pause(200);
   let prev = null;
   while (Date.now() < end) {
-    const src = await driver.getPageSource().catch(() => null);
+    const src = await within(driver.getPageSource(), stepMs, 'getPageSource').catch(() => null);
     if (src && src === prev) return;
     prev = src;
     await driver.pause(400);
@@ -39,17 +46,17 @@ async function waitAppReady(id, maxMs = 8000) {
 
 // Gỡ + cài lại app để bắt đầu như user mới. log(text): ghi thời gian từng giai đoạn vào log của run
 // Hộp thoại hệ thống bật lên sau đó (ATT, thông báo…) → k tự đóng khi nó che màn, không chờ sẵn ở đây
-export async function freshStart({ log = () => {} } = {}) {
+export async function freshStart({ log = () => {}, stepMs = 120000, readyMs = 8000 } = {}) {
   const id = driver.isAndroid ? { appId: BUNDLE_ID } : { bundleId: BUNDLE_ID };
   let t = Date.now();
   const lap = (what) => { log(`${what} (${((Date.now() - t) / 1000).toFixed(1)}s)`); t = Date.now(); };
   await driver.execute('mobile: terminateApp', id).catch(() => {});
   await driver.execute('mobile: removeApp', id).catch(() => {});
   lap('Gỡ app');
-  await driver.execute('mobile: installApp', driver.isAndroid ? { appPath: APP_PATH } : { app: APP_PATH });
+  await within(driver.execute('mobile: installApp', driver.isAndroid ? { appPath: APP_PATH } : { app: APP_PATH }), stepMs, 'installApp');
   lap('Cài app');
-  await driver.execute('mobile: activateApp', id);
-  await waitAppReady(id);
+  await within(driver.execute('mobile: activateApp', id), stepMs, 'activateApp');
+  await waitAppReady(id, readyMs, Math.min(stepMs, 20000));
   lap('Mở app, chờ màn ổn định');
 }
 

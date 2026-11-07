@@ -171,3 +171,16 @@ test('khung: case Tiếp nối bị chặn → cài lại app + đi theo sơ đ�
   fs.writeFileSync(f, code);
   execFileSync(process.execPath, ['--check', f]);
 });
+
+test('khung: phiên Appium chết (session terminated) → tạo lại phiên rồi cài lại app + điều hướng như case Tiếp nối bị chặn, không để các case sau Blocked hàng loạt', () => {
+  const code = buildScript({ file: 'auth', order: ['TC_A', 'TC_B'], regions: { TC_A: BODY_A, TC_B: BODY_B }, helpers: HELPERS, pack: null });
+  assert.match(code, /async function ensureSession\(say\)/);
+  assert.match(code, /session is either terminated or not started/);
+  assert.match(code, /driver\.reloadSession\(\)/);
+  assert.match(code, /if \(await ensureSession\(say\)\) \{ if \(!tc\.fresh\) blockedBy = blockedBy \|\| /);
+  // trước khi phục hồi bằng cài lại app, đảm bảo phiên còn sống
+  assert.match(code, /await ensureSession\(say\);\s*await recoverTo\(tc, say\)/);
+  const f = path.join(tmpDir(), 's.mjs');
+  fs.writeFileSync(f, code);
+  execFileSync(process.execPath, ['--check', f]);
+});

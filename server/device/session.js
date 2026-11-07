@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DATA } from '../paths.js';
 import { remote } from 'webdriverio';
-import { androidEnv, attachCaps, sessionCaps, isRealIos, realIosCaps, detectTeamId, explainSessionError } from './platforms.js';
+import { androidEnv, attachCaps, sessionCaps, isRealIos, realIosCaps, detectTeamId, explainSessionError, ensureSimulatorReady } from './platforms.js';
 
 const PORT = 4724;
 const LOG_FILE = path.join(DATA, 'appium.log');
@@ -29,6 +29,7 @@ export async function openSession({ app, udid, caps }) {
   // iPhone thật: dùng app đã cài sẵn trên máy (không cài lại, giữ dữ liệu), WDA ký bằng Apple Team
   if (app.platform !== 'Android' && isRealIos(udid)) caps = realIosCaps(app, udid, await detectTeamId(app));
   caps = caps || sessionCaps(app, udid);
+  if (app.platform !== 'Android') await ensureSimulatorReady(udid);
   const appium = await ensureAppium();
   let driver;
   try {

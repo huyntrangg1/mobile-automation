@@ -61,3 +61,13 @@ test('classifyCases dùng model nhẹ (QAPD_CONVERT_LIGHT_MODEL, mặc định c
     assert.equal(ai.calls[1].model, 'model-thu');
   } finally { delete process.env.QAPD_CONVERT_LIGHT_MODEL; }
 });
+
+test('classify: chữ "mạng" đứng riêng (vd "mạng xã hội", "kết nối mạng" ở Pre-condition) không làm case thành mơ hồ; "mất mạng" thì có', async () => {
+  const base = { selected: true, platform: 'All', scenario: 's', description: '', pre: 'Có kết nối mạng', steps: 'Chọn Mạng xã hội', expected: 'Hiện "OK"' };
+  let calls = 0;
+  const runClaude = async () => { calls++; return { ok: true, data: { decisions: [{ id: 'B', mode: 'automate', reason: 'x' }] } }; };
+  const out = await classifyCases({ cases: [{ ...base, id: 'A' }, { ...base, id: 'B', steps: 'Mất mạng rồi bấm Retry' }], runClaude });
+  assert.equal(calls, 1);
+  assert.equal(out.find((d) => d.id === 'A').by, 'rule');
+  assert.equal(out.find((d) => d.id === 'B').by, 'ai');
+});

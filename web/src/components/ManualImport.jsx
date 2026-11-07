@@ -41,12 +41,50 @@ function Row({ c, onMove, onResolve, busy }) {
   );
 }
 
+const CODE_LABEL = {
+  NO_QUOTED_EXPECTED: ['Chữ chính xác cần kiểm', 'vd: Hiển thị tiêu đề "Welcome" và nút "Get Started"'],
+  EMPTY_PRE: ['Trạng thái bắt đầu', 'vd: Cài lại app / Tiếp nối case trước, đang ở màn Goals'],
+  VAGUE_STEP: ['Giá trị cụ thể', 'vd: nhập "abc@gmail.com" thay cho "email hợp lệ"'],
+};
+
+// Một case có điểm mờ: xem nội dung manual, trả lời từng điểm (AI đã điền gợi ý nếu có), xác nhận hoặc để manual
+function ClarifyCard({ c, draft, onDraft, onConfirm, onManual, busy }) {
+  const val = (code) => draft?.[code] ?? c.answers?.[code] ?? c.suggest?.[code] ?? '';
+  return (
+    <li className="mi-row mi-clarify">
+      <div className="mi-main" style={{ gap: 8 }}>
+        <div><span className="mono cap">{c.id}</span> <b>{c.title}</b>{c.confirmed && <span className="dotl pass" style={{ marginLeft: 8 }}>Đã trả lời</span>}</div>
+        {c.brief && (
+          <details><summary className="cap">Xem nội dung manual</summary>
+            <div className="cap" style={{ whiteSpace: 'pre-wrap' }}>{[['Pre-condition', c.brief.pre], ['Steps', c.brief.steps], ['Expected', c.brief.expected]].map(([k, v]) => <div key={k}><b>{k}:</b> {v || '(trống)'}</div>)}</div>
+          </details>
+        )}
+        {c.ambiguity.map((a) => {
+          const [label, ph] = CODE_LABEL[a.code] || [a.code, ''];
+          return (
+            <label key={a.code} className="field"><span className="label">{label}<span className="cap"> — {a.text}</span></span>
+              <textarea className="inp" rows={2} value={val(a.code)} placeholder={ph} onChange={(e) => onDraft(c, a.code, e.target.value)} style={{ height: 'auto', padding: 10 }} disabled={busy} />
+              {c.suggest?.[a.code] && !c.answers?.[a.code] && draft?.[a.code] === undefined && <span className="cap">AI gợi ý — sửa nếu chưa đúng</span>}
+            </label>
+          );
+        })}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => onConfirm(c)}>{c.confirmed ? 'Cập nhật câu trả lời' : 'Xác nhận'}</button>
+          <button type="button" className="btn btn-sm btn-ghost" disabled={busy} onClick={() => onManual(c)}>Để manual</button>
+        </div>
+      </div>
+    </li>
+  );
+}
+
 export function ManualImport({ importId, initial, onClose }) {
   const [mi, setMi] = useState(initial ? strip(initial) : null);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState('automate');
   const [qq, setQq] = useState('');
+  const [drafts, setDrafts] = useState({}); // keyOf(case) → { mã điểm mờ: chữ đang gõ }
+  const [tabInit, setTabInit] = useState(false);
   const [autoGen, setAutoGen] = useState(true); // gen script ngay sau khi chuyển đổi (tắt nếu muốn chọn case cần gen)
   useEffect(() => { if (!mi) api.get(`/manual/${importId}`).then(setMi).catch(setErr); }, [importId]);
   useEvents('manualImport', (e) => { if (e.id === importId) setMi(strip(e)); });
@@ -62,6 +100,21 @@ export function ManualImport({ importId, initial, onClose }) {
   });
   const resolve = (c, action) => act(async () => setMi(await api.post(`/manual/${importId}/conflicts`, { sheet: c.sheet, tcId: c.id, action })));
   const convert = () => act(async () => { await api.post(`/manual/${importId}/convert`, { gen: autoGen }); });
+  const draft = (c, code, v) => setDrafts((d) => ({ ...d, [keyOf(c)]: { ...d[keyOf(c)], [code]: v } }));
+  const answersOf = (c) => Object.fromEntries(c.ambiguity.map((a) => [a.code, drafts[keyOf(c)]?.[a.code] ?? c.answers?.[a.code] ?? c.suggest?.[a.code] ?? '']));
+  const confirm = (c) => act(async () => {
+    const out = await api.put(`/manual/${importId}/clarify`, { sheet: c.sheet, tcId: c.id, answers: answersOf(c) });
+    setMi(out);
+    setDrafts((d) => { const n = { ...d }; delete n[keyOf(c)]; return n; });
+  });
+  const suggest = () => act(async () => setMi(await api.post(`/manual/${importId}/suggest`, {})));
+  // Trả lời TRƯỚC: lưu mọi câu trả lời chưa xác nhận (gồm gợi ý của AI) rồi chuyển đổi
+  const confirmAllAndConvert = () => act(async () => {
+    for (const c of mi.cases.filter((x) => x.mode === 'automate' && x.ambiguity?.length && !x.confirmed)) {
+      await api.put(`/manual/${importId}/clarify`, { sheet: c.sheet, tcId: c.id, answers: answersOf(c) });
+    }
+    await api.post(`/manual/${importId}/convert`, { gen: autoGen });
+  });
 
   if (!mi) return <div className="overlay"><div className="scrim" /><section className="help-modal"><div className="skel" style={{ height: 160, margin: 20 }} /><ErrorNote error={err} /></section></div>;
   const { automate, manual } = splitByMode(mi.cases);
@@ -70,7 +123,10 @@ export function ManualImport({ importId, initial, onClose }) {
   const todo = mi.cases.filter((c) => c.state === 'pending' || c.state === 'error').length;
   const p = mi.progress;
   const pct = p ? Math.round((p.done / Math.max(1, p.total)) * 100) : 0;
-  const list = (tab === 'automate' ? automate : manual).filter((c) => !qq || `${c.id} ${c.title}`.toLowerCase().includes(qq.toLowerCase()));
+  const askable = mi.cases.filter((c) => c.mode === 'automate' && c.ambiguity?.length);
+  const unconfirmed = askable.filter((c) => !c.confirmed);
+  if (!tabInit && askable.length) { setTabInit(true); if (unconfirmed.length && mi.status === 'ready') setTab('clarify'); }
+  const list = (tab === 'automate' ? automate : tab === 'manual' ? manual : askable).filter((c) => !qq || `${c.id} ${c.title}`.toLowerCase().includes(qq.toLowerCase()));
   return (
     <div className="overlay">
       <div className="scrim" />
@@ -92,6 +148,7 @@ export function ManualImport({ importId, initial, onClose }) {
         <ErrorNote error={err || (mi.status === 'error' ? new Error(mi.error) : null)} />
         <div className="mi-tools">
           <div className="seg2" role="tablist" aria-label="Danh sách case">
+            {askable.length > 0 && <button type="button" role="tab" aria-selected={tab === 'clarify'} className={tab === 'clarify' ? 'on' : ''} onClick={() => setTab('clarify')}>Cần xác nhận <span className="num">{unconfirmed.length}</span></button>}
             <button type="button" role="tab" aria-selected={tab === 'automate'} className={tab === 'automate' ? 'on' : ''} onClick={() => setTab('automate')}>Sẽ automate <span className="num">{automate.length}</span></button>
             <button type="button" role="tab" aria-selected={tab === 'manual'} className={tab === 'manual' ? 'on' : ''} onClick={() => setTab('manual')}>Để manual <span className="num">{manual.length}</span></button>
           </div>
@@ -99,7 +156,18 @@ export function ManualImport({ importId, initial, onClose }) {
           <input className="inp search-inp" type="search" placeholder="Tìm theo ID, tiêu đề" value={qq} onChange={(e) => setQq(e.target.value)} aria-label="Tìm case" />
         </div>
         <div className="mi-scroll">
-          <ul className="mi-list">{list.map((c) => <Row key={keyOf(c)} c={c} onMove={move} onResolve={resolve} busy={busy || working} />)}</ul>
+          {tab === 'clarify' && askable.length > 0 && (
+            <div className="alert" style={{ margin: 12 }}><Icon name="warn" /><div>
+              <b>{unconfirmed.length} case có điểm mờ chưa xác nhận.</b> Bạn có thể <b>trả lời trước</b> rồi chuyển đổi, hoặc <b>chuyển đổi luôn (AI tự đoán) và trả lời sau</b>: case nào bạn trả lời sau sẽ được chuyển lại riêng, không ảnh hưởng case khác.
+              <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                <button type="button" className="btn btn-sm" disabled={busy || working || !unconfirmed.some((c) => !c.suggest)} onClick={suggest}><Icon name="spark" />AI gợi ý câu trả lời</button>
+                <button type="button" className="btn btn-sm btn-primary" disabled={busy || working || !unconfirmed.length} onClick={confirmAllAndConvert}>Xác nhận tất cả & chuyển đổi</button>
+              </div>
+            </div></div>
+          )}
+          <ul className="mi-list">{tab === 'clarify'
+            ? list.map((c) => <ClarifyCard key={keyOf(c)} c={c} draft={drafts[keyOf(c)]} onDraft={draft} onConfirm={confirm} onManual={(x) => move(x, 'manual')} busy={busy || working} />)
+            : list.map((c) => <Row key={keyOf(c)} c={c} onMove={move} onResolve={resolve} busy={busy || working} />)}</ul>
           {list.length === 0 && <div className="empty"><b style={{ color: 'var(--ink)' }}>Không có case</b></div>}
           {tab === 'manual' && mi.removed?.length > 0 && (
             <div className="alert alert-warn" style={{ margin: 12 }}><Icon name="warn" /><div>

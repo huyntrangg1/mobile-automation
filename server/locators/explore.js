@@ -5,9 +5,23 @@ import { runClaude as defaultRunClaude } from '../ai/claude.js';
 import { parseElements, screenSignature, toPrompt } from './pageSource.js';
 import { systemDialog } from '../device/platforms.js';
 import { navigateTo } from './navigate.js';
-import { looksLikePaywall, closeOverlay, tapAway, foreignForeground } from './overlay.js';
+import os from 'node:os';
+import path from 'node:path';
+import { looksLikePaywall, closeOverlay, tapAway, foreignForeground, isCloseName, BUY } from './overlay.js';
+import { swipe, tapPoint } from '../ui/device.js';
+import { isBuyTarget, elementAtPoint } from '../smoke/guard.js';
 
 const PROMPT = fs.readFileSync(fileURLToPath(new URL('../ai/prompts/explore-step.md', import.meta.url)), 'utf8');
+const PAYWALL_PROMPT = fs.readFileSync(fileURLToPath(new URL('../ai/prompts/explore-paywall.md', import.meta.url)), 'utf8');
+const PAYWALL_SCHEMA = {
+  type: 'object',
+  properties: {
+    action: { type: 'string', enum: ['tapPoint', 'tap', 'swipe', 'wait', 'back', 'relaunch', 'giveUp'] },
+    x: { type: 'number' }, y: { type: 'number' }, locator: { type: 'string' }, text: { type: 'string' }, reason: { type: 'string' },
+  },
+  required: ['action', 'reason'],
+};
+const clampPct = (n) => Math.min(100, Math.max(0, Number(n) || 0));
 const SCHEMA = {
   type: 'object',
   properties: {
@@ -42,7 +56,10 @@ export async function dismissAlert(driver, platform) {
   try {
     const buttons = await driver.execute('mobile: alert', { action: 'getButtons' });
     if (!Array.isArray(buttons) || !buttons.length) return null;
-    const pick = buttons.find((b) => /not to track|don.t allow|không cho phép|từ chối|not now/i.test(b)) || buttons[0];
+    // Hộp xác nhận mua / tờ thanh toán: KHÔNG BAO GIỜ bấm nút mua — chọn Cancel, không có thì dismiss
+    const safe = buttons.filter((b) => !BUY.test(b));
+    const pick = safe.find((b) => /not to track|don.t allow|không cho phép|từ chối|not now|cancel|hủy|huỷ/i.test(b)) || safe[0];
+    if (!pick) { await driver.execute('mobile: alert', { action: 'dismiss' }); return 'Đóng hộp thoại mua (không xác nhận)'; }
     await driver.execute('mobile: alert', { action: 'accept', buttonLabel: pick });
     return pick;
   } catch {
@@ -106,6 +123,7 @@ export async function exploreLoop(id, appId, driver, job, opts, { runClaude = de
   const overlayCloses = new Map(); // screen id → số lần đã đóng; quá 3 mà vẫn kẹt → mở lại app
   let win = null;
   const paywallWaited = new Set();
+  const paywallAi = new Map(); // screen id → thao tác AI đã tự mò ở paywall
   const awayTried = new Map();
   const { edges } = opts;
   // Thao tác vừa làm; màn kế tiếp khác màn cũ → ghi đường đi (màn cũ --thao tác--> màn mới)
@@ -176,7 +194,40 @@ export async function exploreLoop(id, appId, driver, job, opts, { runClaude = de
           overlayCloses.set(screen.id, n - 1);
           continue;
         }
-        if (paywall) log('Màn paywall nhưng không đóng được — để AI chọn (không được mua)');
+        if (paywall) {
+          // Code bó tay: nhờ AI NHÌN ẢNH rồi tự mò (chạm điểm, vuốt, chờ…) — vẫn tuyệt đối không mua
+          const pTried = paywallAi.get(screen.id) || [];
+          if (pTried.length < 6) {
+            const shot = path.join(os.tmpdir(), `qapd-paywall-${process.pid}.png`);
+            try { fs.writeFileSync(shot, Buffer.from(await driver.takeScreenshot(), 'base64')); } catch {}
+            const pr = await runClaude({
+              prompt: fill(PAYWALL_PROMPT, { platform: app?.platform || 'iOS', appName: app?.name || appId, shot, elements: toPrompt(elements), tried: pTried.join('; ') || 'chưa có' }),
+              schema: PAYWALL_SCHEMA, allowedTools: ['Read'], lean: true, noPersist: true, timeoutMs: 120000, model,
+            });
+            if (pr.ok && pr.data?.action && pr.data.action !== 'giveUp') {
+              const a = pr.data;
+              pTried.push(`${a.action}${a.action === 'tapPoint' ? ` ${Math.round(a.x)},${Math.round(a.y)}` : a.locator ? ` ${a.locator}` : a.text ? ` ${a.text}` : ''}`);
+              paywallAi.set(screen.id, pTried);
+              const hit = a.action === 'tapPoint' ? elementAtPoint(elements, win, clampPct(a.x), clampPct(a.y)) : elements.find((e) => e.locator === a.locator || e.alts.includes(a.locator));
+              if (hit && isBuyTarget(hit, true) && !isCloseName(hit.name || hit.label)) { log(`Paywall: chặn thao tác của AI vì rơi vào nút mua "${hit.name || hit.label}"`); }
+              else {
+                try {
+                  if (a.action === 'tapPoint') await tapPoint(driver, clampPct(a.x), clampPct(a.y));
+                  else if (a.action === 'tap' && a.locator) await (await driver.$(a.locator)).click();
+                  else if (a.action === 'swipe') await swipe(driver, ['up', 'down', 'left', 'right'].includes(a.text) ? a.text : 'down');
+                  else if (a.action === 'wait') await driver.pause(4000);
+                  else if (a.action === 'back') await driver.back?.().catch(() => {});
+                  else if (a.action === 'relaunch') await relaunchApp(driver, app);
+                  log(`Paywall — AI tự mò: ${a.action}${a.reason ? ` (${a.reason})` : ''}`);
+                } catch (e) { log(`Paywall — thao tác của AI lỗi: ${String(e.message).split('\n')[0]}`); }
+              }
+              await settle(driver, snap, { android: app?.platform === 'Android', ...settleOpts });
+              overlayCloses.set(screen.id, 0);
+              continue;
+            }
+          }
+          log('Màn paywall nhưng không đóng được — để AI chọn (không được mua)');
+        }
       }
     }
     const done = tried.get(screen.id) || [];

@@ -540,7 +540,7 @@ html,body,#root{height:100%}
 .rv-row{display:flex;align-items:stretch;border-top:1px solid var(--border)}
 .rv-row:first-child{border-top:0}
 .rv-row > .cb{margin:0 0 0 12px;align-self:center;flex:none}
-.rv-row.sel{background:var(--action-soft)}
+.rv-row.picked{background:var(--action-soft)}
 .rv-item{flex:1;min-width:0;display:grid;grid-template-columns:16px 1fr auto;gap:0 8px;align-items:center;padding:8px 12px 8px 8px;border:0;background:none;text-align:left;cursor:pointer;font:inherit}
 .rv-row:not(:has(.cb)) .rv-item{padding-left:12px}
 .rv-item:hover{background:var(--surface-2)}

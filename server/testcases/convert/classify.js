@@ -21,7 +21,7 @@ const RULES = [
   [/chưa chốt|\bTBD\b|\bpending\b|\bopen\s+(q&a|question)/i, 'Q&A chưa chốt: chưa có kết quả mong đợi chính thức'],
 ];
 // Không khớp luật cứng nhưng có dấu hiệu cần người / AI xem
-const AMBIGUOUS = /popup|webview|trình duyệt|hệ thống|quảng cáo|thông báo|animation|biểu đồ|màu|color|hiệu ứng|mạng|offline|wifi|widget|âm thanh|rung/i;
+const AMBIGUOUS = /popup|webview|trình duyệt|hệ thống|quảng cáo|thông báo|animation|biểu đồ|màu|color|hiệu ứng|(mất|không có|không còn|ngắt|tắt|bật|đổi)\s+(mạng|kết nối|wifi)|chế độ máy bay|airplane|offline|wifi|widget|âm thanh|rung/i;
 
 export function prefilter(c) {
   const t = textOf(c);
