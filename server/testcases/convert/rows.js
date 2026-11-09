@@ -12,10 +12,10 @@ const SCHEMA = {
 };
 
 // System prompt cố định giữa các nhóm (được cache): hướng dẫn + quy tắc viết dòng + bảng keyword của SKILL.md
-const systemPrompt = () => `${fs.readFileSync(PROMPT, 'utf8')}\n${rulesFrom('Write each TC as v2 rows')}\n\n${rulesFrom('Reference')}`;
+const systemPrompt = (appText = '') => `${fs.readFileSync(PROMPT, 'utf8')}\n${rulesFrom('Write each TC as v2 rows')}\n\n${rulesFrom('Reference')}${appText}`;
 
 // → { ok: true, testcases: PlanTc[] } | { ok: false, error }   (PlanTc = { id, fresh, pre: string[], rows, platform? })
-export async function writeGroup({ skeleton, group, cases, runClaude, signal, feedback }) {
+export async function writeGroup({ skeleton, group, cases, runClaude, signal, feedback, appText = '' }) {
   const byId = new Map(cases.map((c) => [c.id, c]));
   const flat = skeleton.order.map((o) => o.id);
   const prevId = flat[flat.indexOf(group[0]) - 1];
@@ -27,7 +27,7 @@ export async function writeGroup({ skeleton, group, cases, runClaude, signal, fe
     cases: group.map((id) => { const c = byId.get(id) || {}; return { id, scenario: c.scenario, description: c.description, pre: c.pre, steps: c.steps, expected: c.expected, platform: c.platform, ...(c.clarification ? { clarification: c.clarification } : {}) }; }),
   };
   const prompt = JSON.stringify(message, null, 1) + (feedback ? `\n\nfeedback (lỗi lần trước, sửa đúng các case này):\n${feedback}` : '');
-  const r = await runClaude({ system: systemPrompt(), prompt, schema: SCHEMA, noTools: true, timeoutMs: 600000, signal });
+  const r = await runClaude({ system: systemPrompt(appText), prompt, schema: SCHEMA, noTools: true, timeoutMs: 600000, signal });
   if (!r.ok) return { ok: false, error: `Viết dòng Keyword lỗi: ${r.error}` };
   const got = new Map((r.data?.testcases || []).filter((t) => group.includes(t.id)).map((t) => [t.id, t]));
   const missing = group.filter((id) => !got.has(id));

@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 // Vòng đời app chung (không helper pack), iOS và Android. Helper pack của app ghi đè file này.
 import { APP_PATH, BUNDLE_ID } from '../../config/capabilities/ios.caps.js';
 
@@ -46,18 +47,27 @@ async function waitAppReady(id, maxMs = 8000, stepMs = 20000) {
 
 // Gỡ + cài lại app để bắt đầu như user mới. log(text): ghi thời gian từng giai đoạn vào log của run
 // Hộp thoại hệ thống bật lên sau đó (ATT, thông báo…) → k tự đóng khi nó che màn, không chờ sẵn ở đây
-export async function freshStart({ log = () => {}, stepMs = 120000, readyMs = 8000 } = {}) {
+// settle = false: chỉ chờ app lên foreground, KHÔNG chờ màn đứng yên — case kiểm animation lúc mở app cần nhìn từ khung đầu
+export async function freshStart({ log = () => {}, stepMs = 120000, readyMs = 8000, settle = true } = {}) {
   const id = driver.isAndroid ? { appId: BUNDLE_ID } : { bundleId: BUNDLE_ID };
   let t = Date.now();
   const lap = (what) => { log(`${what} (${((Date.now() - t) / 1000).toFixed(1)}s)`); t = Date.now(); };
+  // Không có file app để cài lại → dừng TRƯỚC khi gỡ (gỡ rồi không cài được thì mọi case sau đều hỏng)
+  if (!APP_PATH || !fs.existsSync(APP_PATH)) throw new Error(`Không có file app để cài lại (APP_PATH="${APP_PATH || ''}") — kiểm đường dẫn file app trong Cài đặt app`);
   await driver.execute('mobile: terminateApp', id).catch(() => {});
   await driver.execute('mobile: removeApp', id).catch(() => {});
   lap('Gỡ app');
   await within(driver.execute('mobile: installApp', driver.isAndroid ? { appPath: APP_PATH } : { app: APP_PATH }), stepMs, 'installApp');
   lap('Cài app');
   await within(driver.execute('mobile: activateApp', id), stepMs, 'activateApp');
-  await waitAppReady(id, readyMs, Math.min(stepMs, 20000));
-  lap('Mở app, chờ màn ổn định');
+  if (settle) {
+    await waitAppReady(id, readyMs, Math.min(stepMs, 20000));
+    lap('Mở app, chờ màn ổn định');
+  } else {
+    const end = Date.now() + readyMs;
+    while (Date.now() < end && (await within(driver.execute('mobile: queryAppState', id), 20000, 'queryAppState').catch(() => 4)) !== 4) await driver.pause(100);
+    lap('Mở app (không chờ màn đứng yên — case kiểm animation)');
+  }
 }
 
 export async function restartApp() {

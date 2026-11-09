@@ -11,12 +11,22 @@ export function stopIfAborted() {
 }
 
 // Bọc các hàm của api (vd object k của steps.js): case đã huỷ gọi tiếp → ném lỗi ngay, không chạm tới app
+const STALE = /expired from the internal cache|stale element|either not present or it has expired/i;
 export function guardApi(api) {
   for (const [name, fn] of Object.entries(api)) {
     if (typeof fn !== 'function') continue;
+    // Phần tử hết hạn giữa chừng (app vẽ lại màn: "has expired from the internal cache", stale element) → làm lại bước đó 1 lần.
+    // Lỗi xảy ra trước khi bước kịp bấm / ghi điểm kiểm nên làm lại không bị trùng
     api[name] = function (...args) {
       stopIfAborted();
-      return fn.apply(this, args);
+      const out = fn.apply(this, args);
+      if (!out || typeof out.then !== 'function') return out;
+      return out.catch(async (e) => {
+        if (!STALE.test(String(e?.message || e))) throw e;
+        await new Promise((r) => setTimeout(r, 500));
+        stopIfAborted();
+        return fn.apply(this, args);
+      });
     };
   }
   return api;

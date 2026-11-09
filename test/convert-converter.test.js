@@ -365,3 +365,39 @@ test('đổi lựa chọn automate/manual → chữ ký đổi, khung được l
   await e.conv.convert(mi.id);
   assert.equal(e.ai.skeleton, before + 1);
 });
+
+test('stop: dừng giữa chừng → status stopped (không phải lỗi), nhóm đã xong giữ plan, chuyển lại chỉ viết nhóm còn thiếu', async () => {
+  const inner = fakeConvertAi();
+  let waiting;
+  const started = new Promise((r) => { waiting = r; });
+  let hang = true;
+  const ai = async (req) => {
+    const isRows = !req.schema.properties.order && !req.schema.properties.decisions;
+    if (hang && isRows && /TC_W_011/.test(req.prompt) && !/TC_W_001/.test(req.prompt)) {
+      waiting();
+      await new Promise((r) => req.signal.addEventListener('abort', r, { once: true }));
+      return { ok: false, cancelled: true, error: 'Đã dừng' };
+    }
+    return inner(req);
+  };
+  const e = env({ ai });
+  const f = await makeManual(e.dir, { sheets: [{ name: 'Welcome', cases: Array.from({ length: 11 }, (_, i) => mcase(i + 1)) }] });
+  const mi = await analyze(e, f);
+  const run = e.conv.convert(mi.id);
+  await started;
+  e.conv.stop(mi.id);
+  await run;
+  const mid = e.conv.get(mi.id);
+  assert.equal(mid.status, 'stopped');
+  assert.deepEqual(mid.problems, []);
+  assert.ok(modeOf(mid, 'TC_W_001').cached, 'nhóm đã xong giữ plan');
+  assert.ok(mid.cases.every((c) => c.state !== 'error'), 'dừng không đánh dấu case lỗi');
+  assert.equal(e.store.list('cases').length, 0, 'chưa import gì');
+  assert.throws(() => e.conv.stop(mi.id), (err) => err.status === 409, 'không còn gì để dừng');
+  hang = false;
+  const rowsBefore = inner.rows.length;
+  await e.conv.convert(mi.id);
+  assert.equal(e.conv.get(mi.id).status, 'done', e.conv.get(mi.id).problems.join('; '));
+  assert.equal(inner.rows.length, rowsBefore + 1, 'chỉ viết nhóm bị dừng');
+  assert.equal(e.store.list('cases').length, 11);
+});

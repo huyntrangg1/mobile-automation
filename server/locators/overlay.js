@@ -24,7 +24,8 @@ export function looksLikePaywall(els) {
 }
 
 // Ứng viên nút đóng, ưu tiên: nút có tên khớp CLOSE_NAME → nút không tên ở mép trên màn (X vẽ bằng icon), góc phải trước rồi góc trái
-export function closeCandidates(els, win = { width: 400, height: 900 }) {
+export function closeCandidates(els, win) {
+  if (!win?.width || !win?.height) win = { width: 400, height: 900 }; // không biết cỡ cửa sổ (null) → cỡ điện thoại thường
   // Nút đóng có tên: Button, hoặc link chữ (paywall hay vẽ "No thanks" bằng StaticText / Link / Other)
   const named = els.filter((e) => ['Button', 'StaticText', 'Link', 'Other'].includes(e.type) && e.enabled && CLOSE_NAME.test((e.name || e.label || '').trim()));
   const top = win.height * 0.18;

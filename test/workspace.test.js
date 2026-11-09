@@ -53,7 +53,8 @@ test('upgradeWorkspace: workspace cũ thiếu steps.js → copy từ template; t
   w('src/report/hooks.js', 'export async function screenSummary() {}');
   const inst = fakeInstall();
   const fixed = await upgradeWorkspace({ workspace: ws }, { installImpl: inst.impl });
-  assert.deepEqual(fixed, ['src/runner/steps.js', 'src/runner/navgraph.js', 'src/runner/compare.js', 'src/runner/limit.js', 'src/runner/layout.js', 'src/runner/ocr.js',
+  // steps.js cần ui.js (workspace chưa có) → chép kèm, không để Run lỗi vì thiếu file
+  assert.deepEqual(fixed, ['src/runner/steps.js', 'src/utils/ui.js', 'src/runner/compare.js', 'src/runner/limit.js', 'src/runner/layout.js', 'src/runner/ocr.js', 'src/runner/navgraph.js',
     'config/capabilities/ios.caps.js', 'src/report/*']);
   assert.ok(fs.existsSync(path.join(ws, 'src/runner/ocr.swift'))); // file đi kèm ocr.js
   assert.match(fs.readFileSync(path.join(ws, 'src/runner/steps.js'), 'utf8'), /export function createSteps/);
@@ -75,7 +76,9 @@ test('upgradeWorkspace: caps cũ (tắt app khi xong case — chạy case để 
   const oldCaps = 'export const iosCaps = {}; // cũ';
   fs.writeFileSync(caps, oldCaps);
   const fixed = await upgradeWorkspace({ workspace: ws }, { installImpl: async () => {} });
-  assert.deepEqual(fixed, ['config/capabilities/ios.caps.js (bản cũ: config/capabilities/ios.caps.js.bak)']);
+  // caps không phải bản template nào (sửa tay) → vẫn thay nhưng báo rõ thay đổi riêng nằm ở .bak
+  assert.equal(fixed.length, 1);
+  assert.match(fixed[0], /^config\/capabilities\/ios\.caps\.js đã sửa tay → thay bằng template.*ios\.caps\.js\.bak/);
   assert.match(fs.readFileSync(caps, 'utf8'), /KEEP_APP_OPEN/);
   assert.equal(fs.readFileSync(`${caps}.bak`, 'utf8'), oldCaps);
   // wdio.conf.js / steps.js của template không còn bước so Figma trong lần chạy test case
@@ -90,4 +93,31 @@ test('upgradeWorkspace: steps.js đã có (helper pack / sửa tay) nhưng thi�
   fs.writeFileSync(path.join(ws, 'src/runner/steps.js'), '// bản cũ');
   await assert.rejects(upgradeWorkspace({ workspace: ws }, { installImpl: async () => {} }), /Chuẩn bị lại/);
   assert.equal(fs.readFileSync(path.join(ws, 'src/runner/steps.js'), 'utf8'), '// bản cũ');
+});
+
+// Workspace cũ: steps.js là bản template cũ (được cập nhật) nhưng ui.js cũ thiếu hàm bản mới dùng → ui.js (chưa sửa tay) cũng phải cập nhật;
+// ui.js đã sửa tay mà thiếu export → báo rõ, không ghi đè
+test('upgradeWorkspace: cập nhật steps.js kéo theo file nó cần (bản cũ chưa sửa tay); file đã sửa tay thiếu export → ghi chú', async () => {
+  const { upgradeWorkspace, recordTemplate } = await import('../server/apps/workspace.js');
+  const TPL = path.join(path.dirname(new URL(import.meta.url).pathname), '../server/apps/template');
+  const ws = tmpDir();
+  fs.cpSync(TPL, ws, { recursive: true });
+  // bản "cũ" đã ghi hash lúc tạo workspace: steps.js + ui.js cũ
+  fs.writeFileSync(path.join(ws, 'src/runner/steps.js'), '// steps cũ\nexport function createSteps() {}\n');
+  fs.writeFileSync(path.join(ws, 'src/utils/ui.js'), 'export async function el() {}\n');
+  recordTemplate(ws, ['src/runner/steps.js', 'src/utils/ui.js'], { template: ws });
+  for (const f of ['src/report/collector.js', 'src/report/hooks.js']) fs.mkdirSync(path.dirname(path.join(ws, f)), { recursive: true });
+  fs.writeFileSync(path.join(ws, 'src/report/collector.js'), 'export function addFlowBug() {}\nexport function resetCurrent() {}\nexport function setCase() {}\nexport { noteScreen };');
+  fs.writeFileSync(path.join(ws, 'src/report/hooks.js'), 'export async function screenSummary() {}');
+  const fixed = await upgradeWorkspace({ workspace: ws }, { installImpl: async () => {} });
+  assert.ok(fixed.some((f) => f.startsWith('src/runner/steps.js')), fixed.join('|'));
+  assert.ok(fixed.includes('src/utils/ui.js'), fixed.join('|'));
+  assert.equal(fs.readFileSync(path.join(ws, 'src/utils/ui.js'), 'utf8'), fs.readFileSync(path.join(TPL, 'src/utils/ui.js'), 'utf8'));
+  // lần 2: ui.js bị sửa tay, thiếu export → ghi chú, không ghi đè
+  fs.writeFileSync(path.join(ws, 'src/runner/steps.js'), '// steps cũ 2\nexport function createSteps() {}\n');
+  recordTemplate(ws, ['src/runner/steps.js'], { template: ws });
+  fs.writeFileSync(path.join(ws, 'src/utils/ui.js'), 'export async function el() {} // sửa tay\n');
+  const fixed2 = await upgradeWorkspace({ workspace: ws }, { installImpl: async () => {} });
+  assert.ok(fixed2.some((f) => /src\/utils\/ui\.js đã sửa tay, thiếu .*loose/.test(f)), fixed2.join('|'));
+  assert.match(fs.readFileSync(path.join(ws, 'src/utils/ui.js'), 'utf8'), /sửa tay/);
 });

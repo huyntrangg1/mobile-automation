@@ -540,8 +540,47 @@ const ui = (f) => fs.readFileSync(new URL(`./ui/${f}`, import.meta.url), 'utf8')
 // share = bản để đăng lên trang Artifact claude.ai: không có khung <html>/<head>/<body> (trang tự bọc),
 // bỏ Export PDF và Log Asana vì môi trường đó chặn hộp thoại in và gọi API ra ngoài.
 // xlsxFiles: [{ name, b64 }] file Excel cho nút Export Excel (file test case đã ghi kết quả) — chỉ bản đầy đủ (trang share chặn tải file)
-export function renderReport({ appName = 'App', results, env, startedAt, share = false, xlsxFiles = [] }) {
+// Cần xem (không đổi số Passed / Failed / Blocked): case Blocked không rõ lỗi của ai (blockKind review), case có lệch so với script
+// (AI hỗ trợ gỡ kẹt / tool đóng popup ngoài test case — ai-assist.jsonl) hoặc có điểm kiểm không làm được tự động (unverified.jsonl)
+export function reviewItems({ withBugs, deviations = [], unverified = [] }) {
+  const tcOf = (r) => r.case?.id || String(r.title || '').split(' ')[0];
+  const by = new Map();
+  const add = (r, why) => { const k = r.key; if (!by.has(k)) by.set(k, { r, why: [] }); by.get(k).why.push(why); };
+  const find = (tc) => withBugs.find((r) => tc && tcOf(r) === tc);
+  for (const r of withBugs) if (r.status === 'blocked' && r.blockKind === 'review') add(r, `Blocked — cần xem lỗi app hay môi trường: ${String(r.error || '').split('\n')[0]}`);
+  for (const d of deviations) {
+    const r = find(d.tc);
+    if (!r) continue;
+    const what = d.kind === 'overlay' ? 'Tool đóng popup ngoài test case' : 'AI hỗ trợ gỡ kẹt';
+    add(r, `${what} ở bước ${d.step ?? '?'}${d.screen ? ` (màn ${d.screen})` : ''}: ${String(d.error || '').split('\n')[0]}`);
+  }
+  for (const u of unverified) {
+    const r = find(u.tc);
+    const why = `Step ${u.step ?? ''} · ${u.label || u.target || ''}: không kiểm được tự động${u.why ? ` (${u.why})` : ''} — kiểm tay`;
+    if (r) add(r, why);
+    else by.set(`u${by.size}`, { r: { case: { id: u.tc || '—' }, status: null }, why: [why] });
+  }
+  return [...by.values()];
+}
+
+export function renderReport({ appName = 'App', results, env, startedAt, share = false, xlsxFiles = [], unverified = [], deviations = [] }) {
   const { withBugs, bugs } = buildModel({ results, env });
+  // Không phải bug của app: case Blocked do môi trường / công cụ / kịch bản. Tách khỏi Bug Details (không có nút Log Asana) để không ai log nhầm
+  const envBlocked = withBugs.filter((r) => r.status === 'blocked' && r.blockKind === 'env');
+  const notApp = envBlocked.length;
+  const notAppRows = envBlocked.map((r) => `<tr><td class="mono">${esc(r.case?.id || '—')}</td><td>Blocked</td><td>${esc(String(r.error || '').split('\n')[0])}</td></tr>`).join('');
+  const notAppSection = notApp ? `
+  <section id="not-app">
+    <div class="sec-head"><h2>Không phải bug của app</h2><span class="hint">${notApp} mục — do môi trường / công cụ / kịch bản test, cần xử lý phía test chứ không log bug</span></div>
+    <div class="card"><div class="card-body"><table class="steps"><thead><tr><th>Test case</th><th>Kết quả</th><th>Lý do</th></tr></thead><tbody>${notAppRows}</tbody></table></div></div>
+  </section>` : '';
+  const review = reviewItems({ withBugs, deviations, unverified });
+  const reviewKeys = new Set(review.map((x) => x.r.key).filter(Boolean));
+  const reviewSection = review.length ? `
+  <section id="review">
+    <div class="sec-head"><h2>Cần xem</h2><span class="hint">${review.length} case — kết quả có thể chưa phản ánh đúng app (lệch so với script, điểm kiểm phải kiểm tay, lỗi chưa rõ của app hay môi trường). Không đổi số Passed / Failed</span></div>
+    <div class="card"><div class="card-body"><table class="steps"><thead><tr><th>Test case</th><th>Kết quả</th><th>Cần xem</th></tr></thead><tbody>${review.map(({ r, why }) => `<tr><td class="mono">${esc(r.case?.id || '—')}</td><td>${esc(r.status ? (STATUS[r.status] || STATUS.failed)[0] : '—')}</td><td><ul class="where">${why.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></td></tr>`).join('')}</tbody></table></div></div>
+  </section>` : '';
   const suites = uniqArr(withBugs.map((r) => r.suite).filter(Boolean));
 
   const rows = withBugs.map((r) => {
@@ -552,11 +591,11 @@ export function renderReport({ appName = 'App', results, env, startedAt, share =
     const head = `
 <span class="c-status"><span class="badge st-${cls}" title="${esc(meaning)}">${ICON[r.status] || ''}${label}</span></span>
 <span class="c-tc">${esc(r.case?.id || '—')}</span>
-<span class="c-name"><b>${esc(r.suite)}</b><br>${esc(r.title)}</span>
+<span class="c-name"><b>${esc(r.suite)}</b><br>${esc(r.title)}${reviewKeys.has(r.key) ? ' <span class="rv-flag" title="Có mục cần xem lại — xem mục Cần xem bên dưới">Cần xem</span>' : ''}</span>
 <span class="c-bugs${mine.length ? '' : ' muted'}">${mine.length ? `${mine.length} bug` : env_ ? 'Môi trường' : '—'}</span>
 <span class="c-time">${ran ? secs(r.duration) : '—'}</span>`;
     // Blocked: lý do bị chặn (ảnh lúc dừng chỉ hiện ở đây khi không có bug card)
-    const blocker = r.status === 'blocked' ? `<div class="blocker"><b>Blocked — ${env_ ? 'lỗi môi trường / dữ liệu, không phải bug của app' : 'bug chặn luồng (xem bước ⛔ bên dưới)'}</b>
+    const blocker = r.status === 'blocked' ? `<div class="blocker"><b>Blocked — ${env_ ? 'lỗi môi trường / dữ liệu, không phải bug của app' : r.blockKind === 'review' ? 'cần xem: chưa rõ lỗi của app hay môi trường (vd app crash làm mất phiên, case trước để app sai màn) — bug vẫn được ghi bên dưới' : 'bug chặn luồng (xem bước ⛔ bên dưới)'}</b>
 <pre>${esc(r.error || '')}</pre>${env_ && r.failShot ? `<img src="${r.failShot}" alt="Màn hình lúc bị chặn">` : ''}</div>` : '';
     const body = ran ? `${blocker}${stepsView(r)}` : `<p class="muted small">${esc(meaning)}</p>`;
     return `<details class="row" data-t="${r.key}" data-tc="${esc(r.case?.id || r.title)}" data-suite="${esc(r.suite)}" data-status="${r.status}" data-sec="${ran ? (r.duration / 1000).toFixed(1) : 0}"><summary>${head}</summary><div class="bugs">${body}</div></details>`;
@@ -611,6 +650,10 @@ ${ui('report.css')}
       </div>
     </div>
   </section>
+
+  ${reviewSection}
+
+  ${notAppSection}
 
   <section class="buglist" id="bugs">
     <div class="sec-head"><h2>Bug Details</h2><span class="hint" id="bf-n"></span><span class="sp"></span>

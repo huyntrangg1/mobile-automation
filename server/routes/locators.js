@@ -2,12 +2,16 @@ import { Router } from 'express';
 import { listOverrides, removeOverride, updateOverride } from '../runs/overrides.js';
 import { matchLocator } from '../locators/tryLocator.js';
 import { resolveTarget } from '../ai/resolve.js';
+import { createAssist } from '../ai/assist.js';
+import { clampExplore } from '../locators/explore.js';
+import { resolveBuyCheck } from '../ai/resolve.js';
 
 
 const wrap = (fn) => async (req, res, next) => { try { await fn(req, res); } catch (e) { next(e); } };
 
-export default function locatorRoutes({ store, map, captures, emit, tryLive }, { resolve = resolveTarget } = {}) {
+export default function locatorRoutes({ store, map, captures, emit, tryLive }, { resolve = resolveTarget, assist = null } = {}) {
   const r = Router();
+  const assistAi = assist || createAssist({ store });
   const lite = (s) => ({ id: s.id, appId: s.appId, name: s.name, screenshot: s.screenshot, count: s.elements.length, seenBy: s.seenBy, updatedAt: s.updatedAt });
   const changed = (appId) => { map.exportLocators(appId); emit('app', { id: appId }); };
 
@@ -100,7 +104,9 @@ export default function locatorRoutes({ store, map, captures, emit, tryLive }, {
   r.post('/apps/:appId/captures', wrap(async (req, res) => {
     const { mode, udid, hints, maxSteps, maxMinutes, fromCurrent, startScreenId } = req.body || {};
     if (!udid) return res.status(400).json({ error: 'Chọn thiết bị' });
-    const id = await captures.start(req.params.appId, { mode, udid, hints, maxSteps, maxMinutes, fromCurrent: !!fromCurrent, startScreenId: startScreenId || undefined });
+    // Giới hạn trên (≤150 bước, ≤60 phút): số lớn / sai → giữ thiết bị hàng giờ
+    const lim = clampExplore({ maxSteps, maxMinutes });
+    const id = await captures.start(req.params.appId, { mode, udid, hints, maxSteps: lim.maxSteps, maxMinutes: lim.maxMinutes, fromCurrent: !!fromCurrent, startScreenId: startScreenId || undefined });
     res.status(201).json(store.get('captures', id));
   }));
   r.post('/captures/:id/stop', wrap(async (req, res) => {
@@ -113,7 +119,15 @@ export default function locatorRoutes({ store, map, captures, emit, tryLive }, {
     if (!app) return res.status(404).json({ error: 'Không có app này' });
     const { target, screen, kind, elements } = req.body || {};
     const out = await resolve({ target, screen, kind, elements, platform: app.platform || 'iOS' });
+    // Trình chạy lưu kết quả thành locator sửa (override) → không bao giờ trả nút mua / xác nhận mua
+    const chk = out?.locator ? resolveBuyCheck(out.locator, Array.isArray(elements) ? elements : [], target) : { ok: true };
+    if (!chk.ok) return res.json({ locator: null, reason: chk.why });
     res.json({ locator: out?.locator || null, reason: out?.reason || '' });
+  }));
+  // AI hỗ trợ lúc chạy (Run option): bước thao tác / điều hướng kẹt → 1 thao tác gỡ kẹt { action, locator, name, text, reason }
+  r.post('/apps/:appId/assist', wrap(async (req, res) => {
+    if (!store.get('apps', req.params.appId)) return res.status(404).json({ error: 'Không có app này' });
+    res.json(await assistAi(req.params.appId, req.body || {}));
   }));
   return r;
 }

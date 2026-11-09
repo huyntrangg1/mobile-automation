@@ -2,34 +2,20 @@
 // Kết quả đọc từ REPORTS_DIR/results/*.json do report chung (skill test-report, writeResult) ghi sau mỗi test.
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { closure } from '../testcases/closure.js';
 import { WDA_DIR } from '../paths.js';
 import { androidEnv, deviceScreenshot, wdaInstalled, ensureSimulatorReady } from '../device/platforms.js';
 import { preflight } from './preflight.js';
 import { readHelp } from './help.js';
+import { buildStamp } from '../apps/buildStamp.js';
 
 const MAX_LOG = 2000;
 const STATUSES = ['passed', 'failed', 'blocked', 'skipped', 'notrun'];
 
-// Dấu vết build: đổi khi cài build mới kể cả khi version không tăng.
-//   iOS .app: hash _CodeSignature/CodeResources (chứa hash mọi file trong bundle) + Info.plist; .apk / không ký: kích thước + giờ sửa
-//   at = lúc build có trong workspace (giờ sửa Info.plist / file apk). Không đọc được → null
-export function buildStamp(appPath) {
-  try {
-    const dir = fs.statSync(appPath).isDirectory();
-    const main = dir ? path.join(appPath, 'Info.plist') : appPath;
-    const st = fs.statSync(main);
-    const parts = dir ? [path.join(appPath, '_CodeSignature/CodeResources'), main].filter((f) => fs.existsSync(f)) : [];
-    const stamp = parts.length
-      ? crypto.createHash('sha1').update(Buffer.concat(parts.map((f) => fs.readFileSync(f)))).digest('hex').slice(0, 12)
-      : `${st.size}-${Math.round(st.mtimeMs)}`;
-    return { stamp, at: new Date(st.mtimeMs).toISOString() };
-  } catch {
-    return null;
-  }
-}
+// Dấu vết build: chuyển sang server/apps/buildStamp.js (dùng chung với lấy locator / chạy thử luồng) — giữ export cũ
+export { buildStamp };
 
 const when = (iso) => new Date(iso).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
 
@@ -67,9 +53,11 @@ export function driftLog(drift) {
 }
 
 
-// Case cho "Run lại": tất cả case của run, chỉ case lỗi (Failed / Blocked / Not Run), hoặc đúng các TC ID tester chọn
+// Case cho "Run lại": tất cả case của run, chỉ case chưa đạt (Failed / Blocked / Not Run / run bị ngắt giữa chừng
+// nên case còn kẹt Queued / Running), hoặc đúng các TC ID tester chọn
+export const RERUN_BAD = ['failed', 'blocked', 'notrun', 'interrupted', 'queued', 'running'];
 export function rerunCaseIds(run, onlyFailed, tcIds) {
-  const bad = new Set(['failed', 'blocked', 'notrun', 'interrupted']);
+  const bad = new Set(RERUN_BAD);
   const pick = tcIds?.length ? new Set(tcIds) : null;
   return run.caseIds.filter((id, i) => (pick ? pick.has(run.order[i]) : !onlyFailed || bad.has(run.results[run.order[i]]?.status)));
 }
@@ -107,6 +95,36 @@ export function formatLive(e, ctx = {}) {
 }
 // Dòng wdio lặp lại điều log của tool đã ghi (từng case ✓/✗, tóm tắt spec, stack trace của điểm kiểm lệch)
 // — giữ dòng lỗi thật (khởi động phiên, lỗi không thuộc điểm kiểm) và dòng "Spec Files"
+// TC ID của 1 file kết quả: case.id; kết quả của hook lỗi (case: null) → từ đầu tiêu đề hoặc '"before each" hook for "TC_1 …"'
+export function resultTcId(r, known) {
+  const has = (x) => x && Object.prototype.hasOwnProperty.call(known, x);
+  if (has(r.case?.id)) return r.case.id;
+  const title = String(r.title || '');
+  const first = title.split(' ')[0];
+  if (has(first)) return first;
+  const hook = title.match(/hook for "([^"\s]+)/);
+  if (hook && has(hook[1])) return hook[1];
+  return r.case?.id || first;
+}
+
+// Run dừng / bị kill trước onComplete của wdio → chưa có bug-report.html: dựng từ results/ bằng report của chính workspace
+export async function buildMissingReport({ workspace, reportsDir, startedAt, appName }) {
+  const html = path.join(reportsDir, 'bug-report.html');
+  if (fs.existsSync(html) || !fs.existsSync(path.join(reportsDir, 'results'))) return false;
+  const hooks = path.join(workspace || '', 'src/report/hooks.js');
+  if (!workspace || !fs.existsSync(hooks)) return false;
+  try {
+    const mod = await import(`${pathToFileURL(hooks).href}?t=${Math.round(fs.statSync(hooks).mtimeMs)}`);
+    if (typeof mod.buildHtml !== 'function') return false;
+    // sync: false — không ghi kết quả vào file test case cho run dở dang
+    await mod.buildHtml(reportsDir, new Date(startedAt || Date.now()), { appName: appName || 'App', open: false, sync: false });
+    return fs.existsSync(html);
+  } catch (e) {
+    console.error('build report (run dừng giữa chừng):', e.message);
+    return false;
+  }
+}
+
 export const NOISE = /Hook executed|operate on a modal dialog|^\[[^\]]+ #\d+-\d+\]|^\[\d+-\d+\] (RUNNING|PASSED|FAILED) in|^\s+at |AssertionError|^\s+- Step \d|^\s*actual\s+expected|^\s*(true|false)+\s*$|"spec" Reporter|^-{10,}\s*$/;
 
 export function createRunner({ store, lock, emit, dataDir, scriptPath, spawnImpl = spawn, screenshotImpl = deviceScreenshot, wdaCheck = wdaInstalled, prepareSim = ensureSimulatorReady, preflightDeps = null, shotMs = 1000, pollMs = 1000, killGraceMs = 15000 }) {
@@ -149,6 +167,20 @@ export function createRunner({ store, lock, emit, dataDir, scriptPath, spawnImpl
     return { by, current, paused };
   }
 
+  // REPORTS_DIR/ai-assist.jsonl → { tc: [{ i, step, screen, target, kind, error, how, actions, tapRow, decision }] }
+  function readAssist(run) {
+    const out = {};
+    let lines = [];
+    try { lines = fs.readFileSync(path.join(run.reportsDir, 'ai-assist.jsonl'), 'utf8').split('\n').filter(Boolean); } catch { return out; }
+    lines.forEach((l, i) => {
+      try {
+        const e = JSON.parse(l);
+        (out[e.tc] ||= []).push({ ...e, i, decision: run.assistDecisions?.[i] || null });
+      } catch {}
+    });
+    return out;
+  }
+
   // Đọc kết quả hiện có → results theo TC ID
   function scan(run, final, paused = false) {
     const dir = path.join(run.reportsDir, 'results');
@@ -158,7 +190,7 @@ export function createRunner({ store, lock, emit, dataDir, scriptPath, spawnImpl
         if (!f.endsWith('.json') || f === 'env.json' || f.startsWith('planned-')) continue;
         let r;
         try { r = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); } catch { continue; }
-        const tcId = r.case?.id || String(r.title || '').split(' ')[0];
+        const tcId = resultTcId(r, results);
         if (!results[tcId]) continue;
         results[tcId] = { status: r.status || (r.passed ? 'passed' : 'failed'), duration: r.duration ?? null, error: r.error ? String(r.error).slice(0, 2000) : null, bugs: r.bugs?.length || 0, blockKind: r.blockKind || null };
       }
@@ -171,13 +203,16 @@ export function createRunner({ store, lock, emit, dataDir, scriptPath, spawnImpl
       results[id] = { ...results[id], status: final ? 'notrun' : (marked || paused ? 'queued' : 'running') };
       marked = true;
     }
+    // AI hỗ trợ khi chạy: lệch so với script của từng case (kèm quyết định tester đã chọn: applied / dismissed)
+    for (const [tc, list] of Object.entries(readAssist(run))) if (results[tc]) results[tc] = { ...results[tc], assist: list };
     const counts = Object.fromEntries(STATUSES.map((s) => [s, 0]));
     for (const r of Object.values(results)) if (r.status in counts) counts[r.status]++;
     return { results, counts };
   }
 
   // manualFix: chế độ sửa tay khi lỗi — step chặn luồng dừng lại hỏi tester (help.json / answer.json trong thư mục run)
-  async function startRun({ appId, udid, caseIds, manualFix = false }) {
+  // aiAssist: AI hỗ trợ khi chạy — bước thao tác / điều hướng kẹt thì AI gỡ (không đụng điểm kiểm); sửa tay được ưu tiên
+  async function startRun({ appId, udid, caseIds, manualFix = false, aiAssist = false }) {
     const app = store.get('apps', appId);
     if (!app) throw Object.assign(new Error('Không có app này'), { status: 404 });
     if (app.status !== 'ready') throw Object.assign(new Error('App chưa sẵn sàng'), { status: 409 });
@@ -218,9 +253,21 @@ export function createRunner({ store, lock, emit, dataDir, scriptPath, spawnImpl
       id, appId, udid, deviceName: udid, caseIds: plan.run, order, added: plan.added.map((x) => byId.get(x).tcId), files,
       status: 'running', counts: { passed: 0, failed: 0, blocked: 0, skipped: 0, notrun: 0 },
       results: Object.fromEntries(runCases.map((c) => [c.tcId, { status: 'queued', title: c.title, module: c.module }])),
-      reportsDir, livePath, pausePath, manualFix: !!manualFix, help: null, current: null, paused: false, pauseRequested: false, reportUrl: null, startedAt: new Date().toISOString(), finishedAt: null, log: [...notes],
+      reportsDir, livePath, pausePath, manualFix: !!manualFix, aiAssist: !!aiAssist && !manualFix, help: null, current: null, paused: false, pauseRequested: false, reportUrl: null, startedAt: new Date().toISOString(), finishedAt: null, log: [...notes],
     };
     store.put('runs', run);
+    // Từ đây đã giữ thiết bị + run 'running': lỗi trước khi wdio chạy (bật simulator treo, kiểm WDA lỗi…) → run 'error', nhả thiết bị
+    try {
+      return await launch();
+    } catch (e) {
+      procs.delete(id);
+      update(id, { status: 'error', error: `Không khởi động được run: ${e.message}`, finishedAt: new Date().toISOString(), current: null, log: [...(store.get('runs', id)?.log || []), `Không khởi động được run: ${e.message}`].slice(-MAX_LOG) });
+      lock.release(id);
+      emit('lock', lock.current());
+      throw Object.assign(new Error(`Không khởi động được run ${id}: ${e.message}`), { status: 500 });
+    }
+
+    async function launch() {
     // Các bước trong Excel của từng case — màn Run hiện bước đang chạy trên nền danh sách này
     const pick = (r) => ({ step: r.step, screen: r.screen, kind: r.kind, keyword: r.keyword, target: r.target, value: r.value, label: r.label });
     const platform = app.platform || 'iOS';
@@ -228,7 +275,7 @@ export function createRunner({ store, lock, emit, dataDir, scriptPath, spawnImpl
 
     const env = {
       ...process.env, ...(app.env || {}),
-      REPORTS_DIR: reportsDir, LIVE_STEPS: livePath, PAUSE_FILE: pausePath, MANUAL_FIX: manualFix ? '1' : '', HELP_DIR: runDir, RUN_CASES: order.join(','), SPECS: specs.join(','), DEVICE_UDID: udid,
+      REPORTS_DIR: reportsDir, LIVE_STEPS: livePath, PAUSE_FILE: pausePath, MANUAL_FIX: manualFix ? '1' : '', AI_ASSIST: aiAssist && !manualFix ? '1' : '', HELP_DIR: runDir, RUN_CASES: order.join(','), SPECS: specs.join(','), DEVICE_UDID: udid,
       BUILD_STAMP: build?.stamp || '', APP_NAME: app.name, APP_PATH: app.appPath, BUNDLE_ID: app.bundleId, REPORT_OPEN: '0', FORCE_COLOR: '0',
       PLATFORM: platform, APP_VERSION: app.version || '', APP_ACTIVITY: app.activity || '', ...androidEnv(),
       WDA_DIR, WDA_PREBUILT: fs.existsSync(path.join(WDA_DIR, 'Build/Products')) ? '1' : '0',
@@ -295,13 +342,17 @@ export function createRunner({ store, lock, emit, dataDir, scriptPath, spawnImpl
           await screenshotImpl(udid, tmp, platform);
           fs.renameSync(tmp, shotFile);
           store.patch('runs', id, { liveShot: `/files/data/runs/${id}/screen.jpg?t=${Date.now()}` });
-        } catch {}
+        } catch (e) {
+          // Thiết bị không chụp được (vd iPhone thật thiếu công cụ) → ghi 1 lần rồi thôi, không thử mỗi giây
+          if (e?.unsupported) { buf.push(`Không hiện được màn hình trực tiếp: ${e.message}`); return; }
+        }
         await new Promise((r) => setTimeout(r, shotMs));
       }
     };
     shoot();
-    proc.on('close', (code) => {
+    proc.on('close', async (code) => {
       job.closed = true;
+      try {
       fs.rmSync(pausePath, { force: true });
       for (const f of ['help.json', 'help.answered.json', 'answer.json']) fs.rmSync(path.join(runDir, f), { force: true });
       clearInterval(timer);
@@ -310,24 +361,34 @@ export function createRunner({ store, lock, emit, dataDir, scriptPath, spawnImpl
       const { results, counts } = scan(cur, true);
       withLive(results);
       const html = path.join(reportsDir, 'bug-report.html');
+      await buildMissingReport({ workspace: app.workspace, reportsDir, startedAt: cur.startedAt, appName: app.name });
       const anyResult = Object.values(results).some((r) => r.status !== 'notrun');
       const status = job.stopping ? 'stopped' : (anyResult || code === 0 ? 'done' : 'error');
+      // wdio chết giữa chừng (không phải tester Stop): vẫn 'done' vì có kết quả, nhưng báo rõ còn case chưa chạy
+      const warning = status === 'done' && code !== 0 && counts.notrun > 0 ? `wdio dừng giữa chừng (exit ${code}) — ${counts.notrun} case chưa chạy` : null;
       const secs = ((Date.now() - Date.parse(cur.startedAt)) / 1000).toFixed(1);
       const summary = `Kết quả: ${['passed', 'failed', 'blocked', 'skipped', 'notrun'].filter((k) => counts[k]).map((k) => `${counts[k]} ${k}`).join(' · ') || 'không có case nào chạy'} · ${secs}s`;
       const drift = readDrift(reportsDir);
       update(id, {
-        log: [...store.get('runs', id).log, ...driftLog(drift), summary].slice(-MAX_LOG),
+        log: [...store.get('runs', id).log, ...driftLog(drift), ...(warning ? [`⚠ ${warning}`] : []), summary].slice(-MAX_LOG),
+        warning,
         drift, results, counts, status, current: null, help: null, paused: false, pauseRequested: false, exitCode: code, finishedAt: new Date().toISOString(),
         reportUrl: fs.existsSync(html) ? `/files/data/runs/${id}/reports/bug-report.html` : null,
         error: status === 'error' ? `wdio dừng (exit ${code}) trước khi chạy được case nào — xem log` : null,
       });
-      procs.delete(id);
-      lock.release(id);
-      emit('lock', lock.current());
-      emit('app', { id: appId });
+      } catch (e) {
+        console.error(`close ${id}:`, e);
+        try { update(id, { status: job.stopping ? 'stopped' : 'error', error: `Lỗi khi tổng hợp kết quả: ${e.message}`, current: null, help: null, finishedAt: new Date().toISOString() }); } catch {}
+      } finally {
+        procs.delete(id);
+        lock.release(id);
+        emit('lock', lock.current());
+        emit('app', { id: appId });
+      }
     });
     proc.on('error', (e) => { buf.push(`Không chạy được wdio: ${e.message}`); });
     return { ...run };
+    }
   }
 
   // Tạm dừng / tiếp tục: file cờ mà khung script kiểm trước mỗi case
@@ -407,5 +468,6 @@ export function createRunner({ store, lock, emit, dataDir, scriptPath, spawnImpl
     return preflight({ app, udid, runCases, deps: preflightDeps({ app, specPath: (f) => scriptPath(app, f), build: buildStamp(app.appPath)?.stamp || '' }) });
   }
 
-  return { startRun, check, stop, pause, resume, answer, deleteRuns, nextRunId };
+  const isRunning = (id) => procs.has(id);
+  return { startRun, check, stop, pause, resume, answer, deleteRuns, nextRunId, isRunning };
 }

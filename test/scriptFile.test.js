@@ -101,7 +101,8 @@ test('khung chờ khi có file PAUSE_FILE trước mỗi case (không cắt gi�
 test('khung truyền k = createSteps(...) vào case (bước dùng chung src/runner/steps.js)', () => {
   const code = buildScript({ file: 'auth', order: ['TC_A'], regions: { TC_A: BODY_A }, helpers: HELPERS, pack: null });
   assert.match(code, /import \{ createSteps \} from '\.\.\/src\/runner\/steps\.js';/);
-  assert.match(code, /k: createSteps\(\{ sa, logStep, snapshot, flowBug: addFlowBug, noteScreen, summarize: screenSummary, tc: tc\.id, vars \}\)/);
+  assert.match(code, /k = createSteps\(\{ sa, logStep, snapshot, flowBug: addFlowBug, noteScreen, summarize: screenSummary, tc: tc\.id, vars, autoDismiss: !handlesDialog\(tc\), watch: watchTexts\(tc\) \}\);/);
+  assert.match(code, /CASES\[tc\.id\]\(\{ tc, data, sa, fill, k \}\)/);
   assert.match(code, /const fill = \(v\) => fillVars\(fillValue\(v, data\), vars\);/);
   assert.match(code, /import \{ setCase, planTest, logStep as reportLogStep, addFlowBug, noteScreen, resetCurrent \} from '\.\.\/src\/report\/collector\.js';/);
   assert.match(code, /import \{ screenSummary \} from '\.\.\/src\/report\/hooks\.js';/);
@@ -163,7 +164,7 @@ test('khung: lỗi không phải điểm kiểm → phục hồi (cài lại app
 
 test('khung: case Tiếp nối bị chặn → cài lại app + đi theo sơ đồ màn tới màn bắt đầu (không có đường → vẫn Blocked); ghi vào Pre-condition', async () => {
   const code = buildScript({ file: 'auth', order: ['TC_A', 'TC_B'], regions: { TC_A: BODY_A, TC_B: BODY_B }, helpers: HELPERS, pack: null });
-  assert.match(code, /import \{ findPath, walkPath \} from '\.\.\/src\/runner\/navgraph\.js';/);
+  assert.match(code, /import \{ findPath, walkPath, screenMarker \} from '\.\.\/src\/runner\/navgraph\.js';/);
   assert.match(code, /process\.env\.AUTO_NAVIGATE !== '0'/);
   assert.match(code, /if \(blockedBy && !\(await navigateStart\(tc, meta, say\)\)\) throw new Error/);
   assert.match(code, /meta\.precondition = \[/);
@@ -177,7 +178,7 @@ test('khung: phiên Appium chết (session terminated) → tạo lại phiên r�
   assert.match(code, /async function ensureSession\(say\)/);
   assert.match(code, /session is either terminated or not started/);
   assert.match(code, /driver\.reloadSession\(\)/);
-  assert.match(code, /if \(await ensureSession\(say\)\) \{ if \(!tc\.fresh\) blockedBy = blockedBy \|\| /);
+  assert.match(code, /if \(await ensureSession\(say\)\) \{ alertAuto = null; if \(!tc\.fresh\) blockedBy = blockedBy \|\| /);
   // trước khi phục hồi bằng cài lại app, đảm bảo phiên còn sống
   assert.match(code, /await ensureSession\(say\);\s*await recoverTo\(tc, say\)/);
   const f = path.join(tmpDir(), 's.mjs');

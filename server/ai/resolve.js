@@ -1,6 +1,24 @@
 // Tìm phần tử lúc chạy theo mô tả trong test case (cách SimUtil làm: không cần lấy locator trước).
 // Trình chạy gửi danh sách phần tử của màn đang hiện + mô tả target → AI chọn đúng 1 phần tử trong danh sách, hoặc không chọn.
 import { runClaude as defaultRunClaude } from './claude.js';
+import { BUY, looksLikePaywall, isCloseName } from '../locators/overlay.js';
+import { looksLikeStoreSheet, isSafeOnStore } from '../smoke/guard.js';
+
+// Nút mua chắc chắn (giống HARD_BUY của assist.js) — kể cả ngoài paywall; "Continue / Confirm" chỉ coi là mua trên paywall
+const HARD_BUY = /\b(subscribe|buy|purchase|start (free )?trial|try (it )?free|get premium|upgrade)\b|[$€£₫¥]\s?\d/i;
+// Kết quả /resolve được trình chạy lưu thành override (dùng lại mọi lần chạy sau) → từ chối phần tử trông như nút mua / xác nhận mua.
+// Ngoại lệ: chính mô tả target là nút mua (test case cố ý kiểm paywall mở tờ thanh toán) và màn KHÔNG phải tờ thanh toán.
+export function resolveBuyCheck(locator, elements = [], target = '') {
+  const el = elements.find((e) => e && e.locator === locator);
+  if (!el) return { ok: true };
+  const n = String(el.name || el.label || '');
+  if (looksLikeStoreSheet(elements)) return isSafeOnStore(el) ? { ok: true } : { ok: false, why: `Chặn: "${n}" nằm trên tờ thanh toán của store — chỉ được bấm đóng / huỷ` };
+  if (isCloseName(n)) return { ok: true };
+  const buy = HARD_BUY.test(n) || (looksLikePaywall(elements) && BUY.test(n));
+  if (!buy) return { ok: true };
+  if (HARD_BUY.test(String(target)) || (looksLikePaywall(elements) && BUY.test(String(target)))) return { ok: true };
+  return { ok: false, why: `Chặn: "${n}" trông như nút mua — không tự chọn thay cho "${target}"` };
+}
 
 const SCHEMA = { type: 'object', properties: { locator: { type: 'string' }, reason: { type: 'string' } }, required: ['locator', 'reason'] };
 // Chọn 1 phần tử từ danh sách ngắn → model nhanh (giống khám phá)

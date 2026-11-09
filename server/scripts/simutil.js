@@ -54,10 +54,12 @@ export function rowCall(r, o) {
 export function caseScript(c, { project, source, platform, caseRow }) {
   const rows = (c.rows || []).filter((r) => !r.platform || r.platform === 'All' || r.platform === platform);
   const unsupported = [];
+  const nav = []; // dòng Nav: SimUtil chạy như điểm kiểm thường (sai → Failed, không Blocked các bước sau)
   const calls = rows.map((r, i) => {
     const o = { step: num(r.step), screen: r.screen || '', row: caseRow + 1 + i, ...(r.label ? { label: r.label } : {}) };
     const x = rowCall(r, o);
     if (x.unsupported) unsupported.push(r.keyword);
+    else if (String(r.kind || '').toLowerCase() === 'nav') nav.push(`${r.kind} ${r.keyword}`);
     return `        ${x.code}`;
   });
   const CASE = { id: c.tcId, title: c.title || '', priority: c.priority || '', app: project, feature: c.module || '', pre: c.pre || [], source, caseRow, controls: [] };
@@ -85,7 +87,7 @@ ${calls.join('\n')}
   }
 });
 `;
-  return { code, rows: rows.length, unsupported };
+  return { code, rows: rows.length, unsupported, nav };
 }
 
 const slug = (s) => String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
@@ -108,15 +110,19 @@ export function exportToSimutil(app, file, cases, { home = SIMUTIL_HOME(), excel
   }
   const platform = app.platform || 'iOS';
   const unsupported = {};
+  const warnings = [];
   let caseRow = 2; // dòng 1 là header
   for (const c of [...cases].sort((a, b) => a.order - b.order)) {
     const s = caseScript(c, { project, source, platform, caseRow });
     fs.writeFileSync(path.join(scriptsDir, `${c.tcId.replace(/[^A-Za-z0-9._-]/g, '_')}.js`), s.code);
     if (s.unsupported.length) unsupported[c.tcId] = s.unsupported;
+    // Báo ngay lúc export (không để tới lúc chạy trong SimUtil mới biết)
+    if (s.unsupported.length) warnings.push(`${c.tcId}: SimUtil không có keyword ${[...new Set(s.unsupported)].map((k) => `"${k}"`).join(', ')} — dòng đó sẽ báo "unsupported" khi chạy`);
+    if (s.nav.length) warnings.push(`${c.tcId}: ${[...new Set(s.nav)].map((k) => `"${k}"`).join(', ')} chạy như điểm kiểm thường trong SimUtil (sai → Failed, không chặn các bước sau như Nav)`);
     caseRow += s.rows + 1;
   }
   setAppId(home, project, platform, app.bundleId);
-  return { project, dir, count: cases.length, replaced: existed, unsupported };
+  return { project, dir, count: cases.length, replaced: existed, unsupported, warnings };
 }
 
 function setAppId(home, project, platform, bundleId) {

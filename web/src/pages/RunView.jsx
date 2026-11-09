@@ -7,18 +7,21 @@ import { PopMenu } from '../components/PopMenu.jsx';
 import { ErrorNote, ExecBadge, PageHeader, fmtDur, fmtTime } from '../components/ui.jsx';
 import { StepList } from '../components/StepList.jsx';
 import { HelpDialog } from '../components/HelpDialog.jsx';
-import { loadManualFix, saveManualFix } from '../manualFix.js';
+import { AssistCard } from '../components/AssistCard.jsx';
+import { loadManualFix, saveManualFix, loadAiAssist, saveAiAssist, loadRerunDevice, saveRerunDevice } from '../manualFix.js';
 
 const ORDER = ['running', 'failed', 'blocked', 'notrun', 'skipped', 'queued', 'passed'];
 const COL = { passed: 'var(--pass)', failed: 'var(--fail)', blocked: 'var(--blocked)', skipped: 'var(--skipped)', notrun: 'var(--skipped)', running: 'var(--ink)' };
 const RUN_STATE = { running: ['stt-run', 'Đang chạy'], done: ['stt-done', 'Xong'], stopped: ['stt-stop', 'Đã dừng'], error: ['stt-err', 'Lỗi'], interrupted: ['stt-err', 'Bị ngắt'] };
 const GLYPH = { passed: ['✓', 'ok'], failed: ['✕', 'err'], blocked: ['⊘', 'warn'], skipped: ['–', 'dim'], notrun: ['○', 'dim'], running: ['●', 'run'], queued: ['…', 'dim'], interrupted: ['✕', 'err'] };
-const isBad = (s) => ['failed', 'blocked', 'notrun', 'interrupted'].includes(s);
+// Case chưa đạt cho "Run lại": gồm case còn kẹt Queued / Running khi run bị ngắt giữa chừng (server: RERUN_BAD)
+const isBad = (s) => ['failed', 'blocked', 'notrun', 'interrupted', 'queued', 'running'].includes(s);
 const FILTERS = [
   ['attn', 'Cần xem', (s) => ['failed', 'blocked', 'interrupted'].includes(s)],
   ['notrun', 'Chưa chạy', (s) => s === 'notrun'],
   ['passed', 'Passed', (s) => s === 'passed'],
   ['skipped', 'Skipped', (s) => s === 'skipped'],
+  ['ai', 'Lệch script', (s, x) => x?.assist?.length > 0],
   ['all', 'Tất cả', () => true],
 ];
 
@@ -34,6 +37,18 @@ export function RunView({ lock, setCurrentApp }) {
   const [q, setQ] = useState('');
   const [pick, setPick] = useState({}); // TC ID tester tick để chạy lại
   const [manualFix, setManualFix] = useState(loadManualFix); // Run lại có bật sửa tay khi lỗi không
+  const [aiAssist, setAiAssist] = useState(loadAiAssist);
+  // Thiết bị cho Run lại: mặc định máy đã chọn lần trước cho app này, không có thì máy của run này
+  const [devices, setDevices] = useState([]);
+  const [rerunUdid, setRerunUdid] = useState('');
+  useEffect(() => { Promise.all([api.get('/devices?platform=iOS'), api.get('/devices?platform=Android').catch(() => [])]).then(([a, b]) => setDevices([...a, ...b])).catch(() => {}); }, []);
+  useEffect(() => {
+    if (!r?.appId || rerunUdid) return;
+    const saved = loadRerunDevice(r.appId);
+    setRerunUdid(saved && devices.some((d) => d.udid === saved) ? saved : r.udid);
+  }, [r?.appId, devices]);
+  const runPlatform = devices.find((d) => d.udid === r?.udid)?.platform;
+  const devChoices = devices.filter((d) => !runPlatform || d.platform === runPlatform);
   const logRef = useRef(null);
   useEffect(() => { api.get(`/runs/${runId}`).then(setR).catch(setErr); }, [runId]);
   // Sidebar theo app của run đang xem
@@ -47,13 +62,13 @@ export function RunView({ lock, setCurrentApp }) {
   const order = r?.order || [];
   const running = r?.status === 'running';
   const stat = (id) => results[id]?.status;
-  const countsBy = useMemo(() => Object.fromEntries(FILTERS.map(([k, , f]) => [k, order.filter((id) => f(stat(id))).length])), [r]);
+  const countsBy = useMemo(() => Object.fromEntries(FILTERS.map(([k, , f]) => [k, order.filter((id) => f(stat(id), results[id])).length])), [r]);
   const defFilter = running ? 'all' : countsBy.attn > 0 ? 'attn' : countsBy.notrun > 0 ? 'notrun' : 'all';
   const f = filter && countsBy[filter] > 0 ? filter : defFilter;
   const list = useMemo(() => {
     const fn = FILTERS.find((x) => x[0] === f)[2];
     const t = q.trim().toLowerCase();
-    return order.filter((id) => fn(stat(id)) && (!t || `${id} ${results[id]?.title || ''}`.toLowerCase().includes(t)))
+    return order.filter((id) => fn(stat(id), results[id]) && (!t || `${id} ${results[id]?.title || ''}`.toLowerCase().includes(t)))
       .sort((a, b) => ORDER.indexOf(stat(a)) - ORDER.indexOf(stat(b)) || order.indexOf(a) - order.indexOf(b));
   }, [r, f, q]);
   const curId = r?.current || order.find((id) => stat(id) === 'running');
@@ -74,11 +89,11 @@ export function RunView({ lock, setCurrentApp }) {
   const [cls, label] = running && r.help ? ['stt-pause', 'Đang chờ tester sửa'] : running && r.paused ? ['stt-pause', 'Đã tạm dừng'] : RUN_STATE[r.status] || RUN_STATE.done;
   const act = (what) => api.post(`/runs/${runId}/${what}`).catch(setErr);
   const badN = order.filter((id) => isBad(stat(id))).length;
-  const onlyNotRun = badN > 0 && order.filter((id) => isBad(stat(id))).every((id) => stat(id) === 'notrun');
+  const onlyNotRun = badN > 0 && order.filter((id) => isBad(stat(id))).every((id) => ['notrun', 'queued', 'running'].includes(stat(id)));
   const picked = order.filter((id) => pick[id]);
   const rerun = async (onlyFailed, tcIds) => {
     setBusy(true); setErr(null);
-    try { const x = await api.post(`/runs/${runId}/rerun`, { onlyFailed, tcIds, manualFix }); setPick({}); nav(`/runs/${x.id}`); } catch (e) { setErr(e); }
+    try { const x = await api.post(`/runs/${runId}/rerun`, { onlyFailed, tcIds, manualFix, aiAssist: aiAssist && !manualFix, udid: rerunUdid || r.udid }); setPick({}); nav(`/runs/${x.id}`); } catch (e) { setErr(e); }
     setBusy(false);
   };
   const remove = async () => {
@@ -101,7 +116,16 @@ export function RunView({ lock, setCurrentApp }) {
         {running && <button className="btn btn-danger" type="button" onClick={() => window.confirm(`Dừng hẳn ${r.id}? Case chưa chạy sẽ thành Not Run.`) && act('stop')}><Icon name="stop" />Stop</button>}
         {!running && (
           <>
+            {devChoices.length > 0 && (
+              <label className="cap" style={{ display: 'flex', alignItems: 'center', gap: 6 }} title="Thiết bị để chạy lại (mặc định máy của run này)">Thiết bị
+                <select className="sel" style={{ maxWidth: 220 }} value={rerunUdid} onChange={(e) => { setRerunUdid(e.target.value); saveRerunDevice(r.appId, e.target.value); }}>
+                  {!devChoices.some((d) => d.udid === r.udid) && <option value={r.udid}>{r.deviceName || r.udid}</option>}
+                  {devChoices.map((d) => <option key={d.udid} value={d.udid} disabled={d.offline}>{d.name}{d.os ? ` · ${d.os}` : ''}{d.real ? ' (máy thật)' : ''}{d.booted ? ' · đang bật' : ''}{d.offline ? ' · offline' : ''}</option>)}
+                </select>
+              </label>
+            )}
             <label className="cap" style={{ display: 'flex', alignItems: 'center', gap: 6 }} title="Step không làm được thì dừng lại cho bạn chọn Block / Skip / Retry / Use element / Fix script"><input className="cb" type="checkbox" checked={manualFix} onChange={(e) => { setManualFix(e.target.checked); saveManualFix(e.target.checked); }} />Sửa tay khi lỗi</label>
+            <label className="cap" style={{ display: 'flex', alignItems: 'center', gap: 6 }} title="Step thao tác / điều hướng kẹt thì AI gỡ rồi chạy tiếp (không đụng điểm kiểm) — ghi lệch so với script"><input className="cb" type="checkbox" checked={aiAssist && !manualFix} disabled={manualFix} onChange={(e) => { setAiAssist(e.target.checked); saveAiAssist(e.target.checked); }} />AI hỗ trợ</label>
             {badN > 0
               ? <button className="btn btn-primary" type="button" disabled={busy || !!lock} title={lock ? lockTitle : 'Chạy lại các case lỗi, bị chặn hoặc chưa chạy'} onClick={() => rerun(true)}><Icon name="refresh" />{onlyNotRun ? `Run lại case chưa chạy (${badN})` : `Run lại case chưa đạt (${badN})`}</button>
               : <button className="btn btn-primary" type="button" disabled={busy || !!lock} title={lockTitle} onClick={() => rerun(false)}><Icon name="play" />Run lại</button>}
@@ -119,6 +143,7 @@ export function RunView({ lock, setCurrentApp }) {
         </div>
       </PageHeader>
       {r.error && <ErrorNote error={r.error} />}
+      {!running && r.warning && <div className="alert alert-warn" role="status"><Icon name="warn" /><div><b>{r.warning}</b> — wdio thoát bất thường trước khi chạy hết (xem tab Log). Bấm <b>Run lại case chưa đạt</b> để chạy các case còn lại.</div></div>}
       {running && r.paused && <div className="alert alert-warn" role="status"><Icon name="pause" /><div><b>Đang tạm dừng</b> trước case kế tiếp. App và phiên Appium vẫn giữ nguyên — bấm <b>Tiếp tục</b> để chạy tiếp, hoặc <b>Stop</b> để dừng hẳn.</div></div>}
       {err && r && <ErrorNote error={err} />}
       {running && r.help && (
@@ -164,7 +189,7 @@ export function RunView({ lock, setCurrentApp }) {
                     {!running && <input className="cb" type="checkbox" aria-label={`Chọn ${id} để chạy lại`} checked={!!pick[id]} onChange={(e) => setPick({ ...pick, [id]: e.target.checked })} />}
                     <button type="button" className="rv-item" aria-current={id === sel ? 'true' : undefined} onClick={() => setSelId(id)}>
                       <span className={`rv-mk ${gc}`} aria-label={s}>{g}</span>
-                      <span className="rv-id">{id}</span>
+                      <span className="rv-id">{id}{results[id].assist?.length > 0 && <span className="cap" title="Có lệch so với script (AI hỗ trợ / tool đóng popup ngoài test case)" style={{ marginLeft: 4 }}>⚑ lệch</span>}</span>
                       <span className="rv-d">{results[id].duration != null ? fmtDur(results[id].duration) : ''}</span>
                       <span className="rv-tt" title={results[id].title}>{results[id].title}</span>
                     </button>
@@ -188,7 +213,7 @@ export function RunView({ lock, setCurrentApp }) {
                 <div className="rv-dh">
                   <div className="rv-dh1">
                     <span className="mono rv-did">{sel}</span>
-                    <ExecBadge status={x.status} />{x.blockKind === 'env' && <span className="cap">môi trường</span>}
+                    <ExecBadge status={x.status} />{x.assist?.length > 0 && <span className="cap" style={{ fontWeight: 600 }}>(lệch so với script)</span>}{x.blockKind === 'env' && <span className="cap">môi trường</span>}{x.blockKind === 'review' && <span className="cap" title="Chưa rõ lỗi của app hay môi trường (vd app crash làm mất phiên, case trước để app sai màn) — xem lại">cần xem</span>}
                     {x.duration != null && <span className="cap">{fmtDur(x.duration)}</span>}
                     {x.bugs > 0 && <span className="cap">{x.bugs} bug</span>}
                     {r.added?.includes(sel) && <span className="cap">thêm vào chuỗi</span>}
@@ -200,6 +225,7 @@ export function RunView({ lock, setCurrentApp }) {
                   <h2 className="rv-dt">{x.title}</h2>
                 </div>
                 {x.status === 'notrun' && !running && <p className="cap rv-note">Case này chưa chạy{r.status === 'stopped' ? ' — run đã dừng trước khi tới đây' : ''}.</p>}
+                <AssistCard runId={r.id} tc={sel} assist={x.assist} running={running} />
                 {x.error && <pre className="code err-pre rv-err">{x.error}</pre>}
                 {running && sel === curId ? (
                   <div className="rv-live">

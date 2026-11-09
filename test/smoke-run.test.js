@@ -30,7 +30,7 @@ const MAIN = `<XCUIElementTypeApplication type="XCUIElementTypeApplication" name
 const PREP = 'Chuẩn bị: đưa app tới màn chính';
 const prepOk = step({ action: 'done', flowStatus: 'ok', summary: 'Đã ở màn chính' });
 
-function setup({ app = true, claude, flows = [flow('f1')], loadFlows, openImpl, limits, prepare = prepOk, xml = XML, onLoad, onFrame, usageEach, frameImageImpl, analyzeImpl, rotateFails = false, attachImpl, pushImpl, appExtra = {}, state } = {}) {
+function setup({ app = true, claude, flows = [flow('f1')], loadFlows, openImpl, limits, prepare = prepOk, xml = XML, onLoad, onFrame, usageEach, frameImageImpl, analyzeImpl, rotateFails = false, attachImpl, pushImpl, appExtra = {}, state, foreign = null, noWin = false } = {}) {
   const dataDir = tmpDir();
   const store = createStore(dataDir);
   if (app) store.put('apps', { id: 'a', name: 'StressWatch', platform: 'iOS', bundleId: 'com.x.sw', ...appExtra });
@@ -54,10 +54,10 @@ function setup({ app = true, claude, flows = [flow('f1')], loadFlows, openImpl, 
     action: () => chain,
     getPageSource: async () => src(),
     takeScreenshot: async () => Buffer.from('png').toString('base64'),
-    getWindowSize: async () => ({ width: 375, height: 812 }),
+    getWindowSize: async () => { if (noWin) throw new Error('no window'); return { width: 375, height: 812 }; },
     getWindowRect: async () => ({ width: 375, height: 812 }),
     setOrientation: async (o) => { if (rotateFails) throw new Error('Unable To Rotate Device'); execs.push(['orient', o]); },
-    execute: async (cmd, a) => { execs.push(['execute', cmd, a]); return cmd === 'mobile: source' ? src() : cmd === 'mobile: activeAppInfo' ? { bundleId: 'com.x.sw' } : undefined; },
+    execute: async (cmd, a) => { execs.push(['execute', cmd, a]); return cmd === 'mobile: source' ? src() : cmd === 'mobile: activeAppInfo' ? { bundleId: (typeof foreign === 'function' ? foreign() : foreign) || 'com.x.sw' } : undefined; },
     $: async (sel) => ({ click: async () => { clicks.push(sel); }, setValue: async () => {} }),
     pause: async () => {}, back: async () => {},
     hideKeyboard: async () => { hides.push(1); },
@@ -85,6 +85,7 @@ function setup({ app = true, claude, flows = [flow('f1')], loadFlows, openImpl, 
 const until = async (fn) => { const end = Date.now() + 5000; while (!fn()) { if (Date.now() > end) throw new Error('timeout'); await new Promise((r) => setTimeout(r, 5)); } };
 const finished = (store, id) => until(() => store.get('smoke', id).status !== 'running');
 const args = { appId: 'a', udid: 'U', prdUrl: PRD, figmaUrl: FIG };
+const SIM = '11111111-2222-3333-4444-555555555555';
 
 test('start: lỗi đầu vào → 404 / 400 đúng status, chưa chiếm thiết bị', async () => {
   const { smoke, lock } = setup({ claude: step({ action: 'done', flowStatus: 'ok', summary: '' }) });
@@ -417,30 +418,71 @@ test('tải được một số frame (không phải tất cả) → vẫn chạ
 });
 
 // ---- Important 5: lớp chặn mua trong code ----
-test('chặn mua: tap vào nút "Start free trial" bị từ chối (không click), ghi log', async () => {
+// Quy tắc: được bấm nút mua TRONG app (mở tờ thanh toán), không bao giờ xác nhận trên tờ thanh toán của store / app khác
+const SHEET = `<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="App" x="0" y="0" width="375" height="812">
+  <XCUIElementTypeStaticText type="XCUIElementTypeStaticText" name="[Environment: Sandbox]" label="[Environment: Sandbox]" x="10" y="400" width="300" height="30" visible="true"/>
+  <XCUIElementTypeButton type="XCUIElementTypeButton" name="Subscribe" label="Subscribe" x="10" y="700" width="300" height="50" visible="true"/>
+  <XCUIElementTypeButton type="XCUIElementTypeButton" name="Cancel" label="Cancel" x="300" y="380" width="60" height="30" visible="true"/>
+</XCUIElementTypeApplication>`;
+
+test('mua: nút "Start free trial" TRONG app được bấm (mở tờ thanh toán), ghi log không xác nhận mua', async () => {
   const { smoke, store, clicks } = setup({ xml: TRIAL, claude: (o, n) => (n === 1 ? step({ action: 'tap', locator: '~Start free trial' }) : doneOk) });
   const rec = await smoke.start(args);
   await finished(store, rec.id);
-  assert.ok(!clicks.includes('~Start free trial'));
-  assert.match(store.get('smoke', rec.id).log.join('\n'), /mua|đăng ký|dùng thử/i);
+  assert.ok(clicks.includes('~Start free trial'));
+  assert.match(store.get('smoke', rec.id).log.join('\n'), /không xác nhận mua/);
 });
 
-test('chặn mua: tapPoint rơi vào nút mua bị từ chối; ngoài nút thì vẫn chạm', async () => {
-  const inside = setup({ xml: TRIAL, claude: (o, n) => (n === 1 ? step({ action: 'tapPoint', x: 50, y: 40 }) : doneOk) });
+test('mua: tờ thanh toán của store (theo chữ trên màn) → chặn Subscribe, cho bấm Cancel', async () => {
+  const buy = setup({ xml: SHEET, claude: (o, n) => (n === 1 ? step({ action: 'tap', locator: '~Subscribe' }) : doneOk) });
+  const r1 = await buy.smoke.start(args);
+  await finished(buy.store, r1.id);
+  assert.ok(!buy.clicks.includes('~Subscribe'));
+  assert.match(buy.store.get('smoke', r1.id).log.join('\n'), /Chặn: Đang ở tờ thanh toán/);
+  assert.match(buy.prompts[0].prompt, /TUYỆT ĐỐI không xác nhận mua/);
+  const cancel = setup({ xml: SHEET, claude: (o, n) => (n === 1 ? step({ action: 'tap', locator: '~Cancel' }) : doneOk) });
+  const r2 = await cancel.smoke.start(args);
+  await finished(cancel.store, r2.id);
+  assert.ok(cancel.clicks.includes('~Cancel'));
+});
+
+test('mua: app khác ở trên cùng (Google Play / StoreKit) → chặn bấm nút xác nhận dù màn trông bình thường', async () => {
+  const h = setup({ xml: CONT, foreign: 'com.android.vending', claude: (o, k) => (k === 1 ? step({ action: 'tap', locator: '~Continue' }) : doneOk) });
+  const rec = await h.smoke.start(args);
+  await finished(h.store, rec.id);
+  assert.ok(!h.clicks.includes('~Continue'));
+});
+
+test('mua: vừa bấm nút mua trong app → các bước kế tiếp chỉ được đóng (tapPoint bị chặn, tờ StoreKit có thể không có trong cây)', async () => {
+  const { smoke, store, clicks, taps } = setup({ xml: TRIAL, claude: (o, n) => (n === 1 ? step({ action: 'tap', locator: '~Start free trial' }) : n === 2 ? step({ action: 'tapPoint', x: 50, y: 90 }) : n === 3 ? step({ action: 'tap', locator: '~Log Now' }) : doneOk) });
+  const rec = await smoke.start(args);
+  await finished(store, rec.id);
+  assert.ok(clicks.includes('~Start free trial'));
+  assert.deepEqual(taps, []);
+  assert.ok(!clicks.includes('~Log Now'));
+});
+
+test('tapPoint: tờ thanh toán → chỉ chạm được nút Cancel; không biết cỡ màn hình trên paywall → từ chối', async () => {
+  const inside = setup({ xml: SHEET, claude: (o, n) => (n === 1 ? step({ action: 'tapPoint', x: 50, y: 88 }) : doneOk) });
   const r1 = await inside.smoke.start(args);
   await finished(inside.store, r1.id);
   assert.deepEqual(inside.taps, []);
-  const outside = setup({ xml: TRIAL, claude: (o, n) => (n === 1 ? step({ action: 'tapPoint', x: 50, y: 10 }) : doneOk) });
-  const r2 = await outside.smoke.start(args);
-  await finished(outside.store, r2.id);
-  assert.equal(outside.taps.length, 1);
+  const cancel = setup({ xml: SHEET, claude: (o, n) => (n === 1 ? step({ action: 'tapPoint', x: 88, y: 48.5 }) : doneOk) });
+  const r2 = await cancel.smoke.start(args);
+  await finished(cancel.store, r2.id);
+  assert.equal(cancel.taps.length, 1);
+  const nowin = setup({ xml: PAYWALL, noWin: true, claude: (o, n) => (n === 1 ? step({ action: 'tapPoint', x: 50, y: 10 }) : doneOk) });
+  const r3 = await nowin.smoke.start(args);
+  await finished(nowin.store, r3.id);
+  assert.deepEqual(nowin.taps, []);
+  assert.match(nowin.store.get('smoke', r3.id).log.join('\n'), /Không biết cỡ màn hình/, JSON.stringify(nowin.store.get('smoke', r3.id).error));
 });
 
-test('chặn mua: "Continue" bị chặn ở màn paywall nhưng được bấm ở màn thường (onboarding)', async () => {
+test('mua: "Continue" trên paywall trong app và ở màn thường đều bấm được (chỉ chặn trên tờ thanh toán)', async () => {
   const pay = setup({ xml: PAYWALL, claude: (o, n) => (n === 1 ? step({ action: 'tap', locator: '~Continue' }) : doneOk) });
   const r1 = await pay.smoke.start(args);
   await finished(pay.store, r1.id);
-  assert.ok(!pay.clicks.includes('~Continue'));
+  assert.ok(pay.clicks.includes('~Continue'));
   const plain = setup({ xml: CONT, claude: (o, n) => (n === 1 ? step({ action: 'tap', locator: '~Continue' }) : doneOk) });
   const r2 = await plain.smoke.start(args);
   await finished(plain.store, r2.id);
@@ -623,7 +665,7 @@ test('hành động rotate: xoay được → gọi setOrientation; không xoay 
   const ok = setup({ claude: (o, n) => (n === 1 ? step({ action: 'rotate', text: 'landscape' }) : flowDone()) });
   const r1 = await ok.smoke.start({ ...args, robust: false });
   await finished(ok.store, r1.id);
-  assert.deepEqual(ok.execs.filter((e) => e[0] === 'orient'), [['orient', 'LANDSCAPE']]);
+  assert.deepEqual(ok.execs.filter((e) => e[0] === 'orient'), [['orient', 'LANDSCAPE'], ['orient', 'PORTRAIT']]); // hết luồng tự đưa về dọc
   assert.equal(ok.store.get('smoke', r1.id).flows[0].status, 'ok');
 
   const locked = setup({ rotateFails: true, claude: (o, n) => (n === 1 ? step({ action: 'rotate', text: 'landscape' }) : flowDone()) });
@@ -853,13 +895,56 @@ test('hành động openLink: mở deep link bằng mobile: deepLink, tính là 
 test('hành động push: gọi pushImpl với udid + bundleId + nội dung; lỗi (máy thật) ghi log, không phải lỗi app', async () => {
   const pushes = [];
   const h = setup({ pushImpl: async (o) => { pushes.push(o); }, claude: (o, n) => (n === 1 ? step({ action: 'push', text: 'Chương mới|Đọc ngay' }) : flowDone()) });
-  const rec = await h.smoke.start({ ...args, robust: false });
+  const rec = await h.smoke.start({ ...args, udid: SIM, robust: false });
   await finished(h.store, rec.id);
-  assert.equal(pushes[0].udid, 'U');
+  assert.equal(pushes[0].udid, SIM);
   assert.equal(pushes[0].title, 'Chương mới');
   assert.equal(pushes[0].body, 'Đọc ngay');
+  assert.ok(h.prompts[0].schema.properties.action.enum.includes('push'));
+  assert.match(h.prompts[0].prompt, /"push": gửi push giả lập/);
   const bad = setup({ pushImpl: async () => { throw new Error('Chỉ hỗ trợ Simulator'); }, claude: (o, n) => (n === 1 ? step({ action: 'push', text: 'x' }) : flowDone()) });
-  const r2 = await bad.smoke.start({ ...args, robust: false });
+  const r2 = await bad.smoke.start({ ...args, udid: SIM, robust: false });
   await finished(bad.store, r2.id);
   assert.match(bad.store.get('smoke', r2.id).log.join('\n'), /Chỉ hỗ trợ Simulator/);
+});
+
+test('push: thiết bị không phải iOS Simulator → schema / prompt không có "push"; AI vẫn trả push thì bỏ qua, không gọi pushImpl', async () => {
+  const pushes = [];
+  const h = setup({ pushImpl: async (o) => { pushes.push(o); }, claude: (o, n) => (n === 1 ? step({ action: 'push', text: 'a|b' }) : flowDone()) });
+  const rec = await h.smoke.start({ ...args, robust: false });
+  await finished(h.store, rec.id);
+  assert.equal(pushes.length, 0);
+  assert.ok(!h.prompts[0].schema.properties.action.enum.includes('push'));
+  assert.doesNotMatch(h.prompts[0].prompt, /"push": gửi push/);
+  assert.match(h.store.get('smoke', rec.id).log.join('\n'), /Bỏ qua push/);
+});
+
+test('iPhone thật: dùng lại app không tới màn chính → KHÔNG cài sạch lại (vô ích trên máy thật), báo lỗi rõ', async () => {
+  const REAL = '00008030-001A2B3C4D5E6F70';
+  const h = setup({ state: { id: `a|${REAL}`, appId: 'a', udid: REAL, build: '' }, prepare: step({ action: 'done', flowStatus: 'unreachable', summary: 'kẹt' }), claude: doneOk });
+  const rec = await h.smoke.start({ ...args, udid: REAL });
+  await finished(h.store, rec.id);
+  assert.deepEqual(h.sessions, ['attach']);
+  assert.equal(h.store.get('smoke', rec.id).status, 'error');
+  assert.match(h.store.get('smoke', rec.id).log.join('\n'), /iPhone thật/);
+});
+
+test('start lỗi sau khi chiếm thiết bị → nhả khoá; stop không chờ mãi', async () => {
+  const h = setup({ claude: doneOk });
+  const orig = h.store.put;
+  h.store.put = (k, v) => { if (k === 'smoke') throw new Error('disk full'); return orig.call(h.store, k, v); };
+  await assert.rejects(h.smoke.start(args), /disk full/);
+  assert.equal(h.lock.current(), null);
+});
+
+test('màn trống vì app khác cứ che: đóng tối đa vài lần rồi mở lại app, cuối cùng kết thúc luồng (không giữ thiết bị tới hết giờ)', async () => {
+  const EMPTY = '<XCUIElementTypeApplication type="XCUIElementTypeApplication" name="App" x="0" y="0" width="375" height="812"/>';
+  let n = 0;
+  const h = setup({ xml: () => (n > 0 ? EMPTY : XML), foreign: () => (n > 0 ? 'com.apple.mobilesafari' : null), claude: (o, k) => { n = k; return step({ action: 'tap', locator: '~Log Now' }); } });
+  const rec = await h.smoke.start(args);
+  await finished(h.store, rec.id);
+  const r = h.store.get('smoke', rec.id);
+  assert.equal(r.flows[0].status, 'unverifiable');
+  assert.match(r.flows[0].summary, /App khác \/ tờ thanh toán cứ che màn/);
+  assert.match(r.log.join('\n'), /mở lại app/);
 });

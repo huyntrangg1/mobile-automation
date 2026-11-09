@@ -297,3 +297,172 @@ test('sai màn: help.json có locator của bước + thao tác trước; Block 
   assert.deepEqual(h.prev, { step: 1, screen: 'Welcome', keyword: 'Tap', target: 'Get Started' });
   t.stop();
 });
+
+// AI hỗ trợ khi chạy (AI_ASSIST=1): kẹt ở bước bấm → hỏi /assist, làm thao tác AI chọn, thử lại đúng bước, ghi lệch so với script
+test('AI hỗ trợ: AI bấm thêm "Skip" → bước Tap của script chạy được, ghi ai-assist.jsonl', async () => {
+  const dir = tmpDir();
+  const dev = device(new Set(['~Skip']));
+  const calls = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, o) => {
+    calls.push([url, JSON.parse(o.body)]);
+    dev.present.add('sel-go'); // sau khi AI bấm Skip thì nút của script hiện ra
+    return { ok: true, json: async () => ({ action: 'tap', locator: '~Skip', name: 'Skip', text: '', reason: 'màn trung gian' }) };
+  };
+  const steps = [];
+  const env = { AI_ASSIST: '1', QAPD_API: 'http://x/api', APP_ID: 'app1', REPORTS_DIR: dir, LIVE_STEPS: path.join(dir, 'live.jsonl'), AUTO_RESOLVE: '0' };
+  const k = createSteps({ sa: { eq() {} }, logStep: (s) => steps.push(s), snapshot: async () => ({ k: null }), env, cwd: dir, tc: 'TC_9' });
+  try {
+    await k.tap(3, 'Welcome', 'Go', 'sel-go');
+  } finally { globalThis.fetch = realFetch; }
+  assert.equal(calls.length, 1);
+  assert.match(calls[0][0], /\/apps\/app1\/assist$/);
+  assert.deepEqual([calls[0][1].tc, calls[0][1].step, calls[0][1].kind, calls[0][1].target], ['TC_9', 3, 'tap', 'Go']);
+  assert.deepEqual(dev.taps, ['~Skip', 'sel-go']);
+  const e = JSON.parse(fs.readFileSync(path.join(dir, 'ai-assist.jsonl'), 'utf8').trim());
+  assert.deepEqual([e.tc, e.step, e.how, e.actions[0].action, e.actions[0].name], ['TC_9', 3, 'retry', 'tap', 'Skip']);
+  assert.ok(steps.some((s) => s.keyword === 'AI hỗ trợ'));
+});
+
+test('AI hỗ trợ: AI bó tay (giveUp) → giữ lỗi gốc của script, không ghi lệch', async () => {
+  const dir = tmpDir();
+  device(new Set());
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ action: 'giveUp', reason: 'lỗi app' }) });
+  const env = { AI_ASSIST: '1', QAPD_API: 'http://x/api', APP_ID: 'app1', REPORTS_DIR: dir, AUTO_RESOLVE: '0' };
+  const k = createSteps({ sa: { eq() {} }, logStep() {}, snapshot: async () => ({ k: null }), env, cwd: dir, tc: 'TC_9' });
+  try {
+    await assert.rejects(k.tap(1, 'Welcome', 'Go', 'sel-go'), /still not existing/);
+  } finally { globalThis.fetch = realFetch; }
+  assert.ok(!fs.existsSync(path.join(dir, 'ai-assist.jsonl')));
+});
+
+// A: phát hiện kẹt sớm — màn đứng yên, không đang tải → kết luận trước khi hết giờ chờ
+test('kẹt sớm: màn đứng yên ≥5s → báo lỗi trước khi hết 15s; màn đang tải → chờ đủ', async () => {
+  const dir = tmpDir();
+  device(new Set());
+  let polls = 0;
+  globalThis.driver.getPageSource = async () => { polls++; return '<XCUIElementTypeStaticText name="Other screen"/>'; };
+  const k = createSteps({ sa: { eq() {} }, logStep() {}, snapshot: async () => ({ k: null }), env: { AUTO_RESOLVE: '0' }, cwd: dir, tc: 'TC_S' });
+  await assert.rejects(k.nav('Goals', 'sel-title', 'tiêu đề', 15000), /Không tới được màn Goals/);
+  assert.ok(polls >= 4 && polls < 9, `polls ${polls}`); // kết luận sau ~6–7,5s (5 lượt 1,5s), không chờ đủ 10 lượt
+  polls = 0;
+  globalThis.driver.getPageSource = async () => { polls++; return '<XCUIElementTypeStaticText name="Warming up the import tool..."/>'; };
+  await assert.rejects(k.nav('Goals', 'sel-title', 'tiêu đề', 15000), /Không tới được màn Goals/);
+  assert.ok(polls >= 9, `đang tải phải chờ đủ, polls ${polls}`);
+  // Wait until displayed do tester đặt số giây → chờ đủ, không kết luận sớm
+  polls = 0;
+  globalThis.driver.getPageSource = async () => { polls++; return '<x/>'; };
+  await assert.rejects(k.waitDisplayed(1, 'Goals', 'Title', 'sel-title', 15), /Không tới được màn Goals/);
+  assert.equal(polls, 0);
+});
+
+test('hook có sẵn: kill_app / app_not_running chạy được khi src/hooks.js không khai báo', async () => {
+  const dir = tmpDir();
+  const dev = device(new Set());
+  globalThis.driver.execute = async (cmd, o) => { dev.execs.push([cmd, o]); return cmd === 'mobile: queryAppState' ? 1 : null; };
+  const eqs = [];
+  const k = createSteps({ sa: { eq: (...a) => eqs.push(a) }, logStep() {}, snapshot: async () => ({ k: null }), env: { BUNDLE_ID: 'com.x' }, cwd: dir, tc: 'TC_H' });
+  await k.runSetup(1, 'Home', 'kill_app');
+  await k.runCheck(1, 'Home', 'app_not_running', 'App đã tắt');
+  assert.deepEqual(dev.execs.map((x) => x[0]), ['mobile: terminateApp', 'mobile: queryAppState']);
+  assert.equal(eqs[0][2], eqs[0][3]); // actual = expected → pass
+  await assert.rejects(k.runSetup(1, 'Home', 'store_account_plus_active'), /Chưa khai báo hook setup/);
+});
+
+test('Set network trên iOS → lỗi SkipCase (case thành Skipped, không Blocked)', async () => {
+  device(new Set());
+  const k = createSteps({ sa: { eq() {} }, logStep() {}, snapshot: async () => ({ k: null }), env: {}, cwd: tmpDir(), tc: 'TC_N' });
+  await assert.rejects(k.setNetwork(1, 'S', 'off'), (e) => e.name === 'SkipCase' && /iOS Simulator không giả lập mất mạng/.test(e.message));
+});
+
+test('B: AI đã bó tay ở một chỗ kẹt → case sau kẹt y chỗ đó không hỏi AI lại', async () => {
+  const dir = tmpDir();
+  device(new Set());
+  let calls = 0;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => { calls++; return { ok: true, json: async () => ({ action: 'giveUp', reason: 'app nhảy bước' }) }; };
+  const env = { AI_ASSIST: '1', QAPD_API: 'http://x/api', APP_ID: 'a', REPORTS_DIR: dir, AUTO_RESOLVE: '0', EARLY_STUCK: '0' };
+  try {
+    for (const tc of ['TC_M1', 'TC_M2']) {
+      const k = createSteps({ sa: { eq() {} }, logStep() {}, snapshot: async () => ({ k: null }), env, cwd: dir, tc });
+      await assert.rejects(k.tap(2, 'Tutorial Memo', 'Tap here memo', 'sel-memo'), /still not existing/);
+    }
+  } finally { globalThis.fetch = realFetch; }
+  assert.equal(calls, 1);
+});
+
+test('guardApi: phần tử hết hạn → làm lại bước 1 lần; lỗi khác ném luôn', async () => {
+  const { guardApi } = await import('../server/apps/template/src/runner/limit.js');
+  let n = 0;
+  const api = guardApi({ async read() { n++; if (n === 1) throw new Error('The element identified by "01" is either not present or it has expired from the internal cache'); return 'ok'; }, sync: () => 5, async bad() { throw new Error('khác'); } });
+  assert.equal(await api.read(), 'ok');
+  assert.equal(n, 2);
+  assert.equal(api.sync(), 5);
+  await assert.rejects(api.bad(), /khác/);
+});
+
+test('tự bấm lại: bấm xong app chưa chuyển màn, nút vẫn hiện → bấm lại 1 lần rồi tới màn', async () => {
+  const dir = tmpDir();
+  const dev = device(new Set(['sel-next']));
+  // nút đang hiện; lần bấm thứ 2 mới chuyển màn
+  const base = globalThis.$;
+  globalThis.$ = (sel) => ({ ...base(sel), waitForDisplayed: async () => { if (!dev.present.has(sel)) throw new Error('not displayed'); }, click: async () => { dev.taps.push(sel); if (dev.taps.length === 2) dev.present.add('sel-title'); } });
+  const k = createSteps({ sa: { eq() {} }, logStep() {}, snapshot: async () => ({ k: null }), env: { AUTO_RESOLVE: '0', EARLY_STUCK: '0', LIVE_STEPS: path.join(dir, 'live.jsonl') }, cwd: dir, tc: 'TC_R' });
+  await k.tap(1, 'Good news', 'Continue', 'sel-next');
+  await k.nav('Tutorial', 'sel-title', 'tiêu đề', 3000);
+  assert.deepEqual(dev.taps, ['sel-next', 'sel-next']);
+  assert.match(fs.readFileSync(path.join(dir, 'live.jsonl'), 'utf8'), /Bấm lại \\"Continue\\"/);
+});
+
+test('double tap: hộp thoại hệ thống bật lên ngay sau → ghi cảnh báo lần bấm 2 có thể bị nuốt', async () => {
+  const dev = device(new Set(['sel-go']));
+  globalThis.$ = (sel) => ({ waitForExist: async () => { if (!dev.present.has(sel)) throw new Error('still not existing'); }, elementId: 'e1' });
+  globalThis.driver.execute = async (cmd) => (cmd === 'mobile: alert' ? ['Ask App Not to Track', 'Allow'] : null);
+  const steps = [];
+  const k = createSteps({ sa: { eq() {} }, logStep: (s) => steps.push(s), snapshot: async () => ({ k: null }), env: { SYSTEM_ALERT: 'off' }, cwd: tmpDir(), tc: 'TC_D' });
+  await k.doubleTap(1, 'Welcome', 'Get Started', 'sel-go');
+  assert.ok(steps.some((s) => /lần bấm thứ 2 có thể đã bị nuốt/.test(s.note || '')));
+});
+
+test('bước kiểm bị popup trong app che: đóng popup (Not now / Close) rồi kiểm lại; ghi note popup ngoài test case', async () => {
+  const dir = tmpDir();
+  const dev = device(new Set(['sel-empty']));
+  let sheet = true;
+  globalThis.driver.getPageSource = async () => (sheet ? '<XCUIElementTypeStaticText name="Save your kitchen to your account" visible="true"/><XCUIElementTypeButton name="Continue with Apple" visible="true"/><XCUIElementTypeButton name="Close" visible="true"/>' : '<x/>');
+  const base = globalThis.$;
+  globalThis.$ = (sel) => ({
+    ...base(sel),
+    waitForExist: async () => { if (sel === '~Close' && sheet) return; if (sel === 'sel-empty' && !sheet) return; throw new Error('still not existing'); },
+    click: async () => { dev.taps.push(sel); if (sel === '~Close') sheet = false; },
+  });
+  const eqs = [];
+  const steps = [];
+  const k = createSteps({ sa: { eq: (...a) => eqs.push(a) }, logStep: (s) => steps.push(s), snapshot: async () => ({ k: null }), env: { SYSTEM_ALERT: 'off' }, cwd: dir, tc: 'TC_P' });
+  await k.shown(13, 'Tastory', 'No recipe added', 'Trạng thái trống', 'sel-empty', { timeout: 10 });
+  assert.deepEqual(dev.taps, ['~Close']);
+  assert.equal(eqs[0][2], true); // đọc lại sau khi đóng → thấy
+  assert.ok(steps.some((s) => /Popup ngoài test case: "Save your kitchen to your account"/.test(s.note || '')));
+});
+
+test('đóng popup ngoài test case → ghi "lệch so với script" (ai-assist.jsonl) gắn với đúng bước kiểm', async () => {
+  const dir = tmpDir();
+  const dev = device(new Set(['sel-empty']));
+  let sheet = true;
+  globalThis.driver.getPageSource = async () => (sheet ? '<XCUIElementTypeStaticText name="Save your kitchen to your account" visible="true"/><XCUIElementTypeButton name="Close" visible="true"/>' : '<x/>');
+  const base = globalThis.$;
+  globalThis.$ = (sel) => ({ ...base(sel), waitForExist: async () => { if ((sel === '~Close' && sheet) || (sel === 'sel-empty' && !sheet)) return; throw new Error('still not existing'); }, click: async () => { if (sel === '~Close') sheet = false; } });
+  const k = createSteps({ sa: { eq() {} }, logStep() {}, snapshot: async () => ({ k: null }), env: { SYSTEM_ALERT: 'off', REPORTS_DIR: dir }, cwd: dir, tc: 'TC_O' });
+  await k.shown(13, 'Tastory', 'No recipe added', 'Trạng thái trống', 'sel-empty', { timeout: 10 });
+  const e = JSON.parse(fs.readFileSync(path.join(dir, 'ai-assist.jsonl'), 'utf8').trim());
+  assert.deepEqual([e.tc, e.step, e.screen, e.target, e.kind, e.source, e.actions[0].name], ['TC_O', 13, 'Tastory', 'No recipe added', 'overlay', 'tool', 'Close']);
+  assert.match(e.error, /Popup ngoài test case "Save your kitchen to your account" che màn khi kiểm "No recipe added"/);
+});
+
+test('bước kiểm "không hiển thị" sai thì KHÔNG đóng popup (tránh pass giả)', async () => {
+  const dev = device(new Set(['sel-pay']));
+  globalThis.driver.getPageSource = async () => '<XCUIElementTypeStaticText name="Sign in to Tastory" visible="true"/><XCUIElementTypeButton name="Close" visible="true"/>';
+  const k = createSteps({ sa: { eq() {} }, logStep() {}, snapshot: async () => ({ k: null }), env: { SYSTEM_ALERT: 'off' }, cwd: tmpDir(), tc: 'TC_Q' });
+  await k.notShown(1, 'Home', 'Paywall', 'Không hiện paywall', 'sel-pay');
+  assert.deepEqual(dev.taps, []);
+});

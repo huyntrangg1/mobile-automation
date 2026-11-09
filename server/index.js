@@ -11,6 +11,7 @@ import { openSession, attachSession } from './device/session.js';
 import { exploreLoop } from './locators/explore.js';
 import { createGenerator } from './scripts/generate.js';
 import { createConverter } from './testcases/convert/converter.js';
+import { createFlowCheck } from './testcases/convert/flowCheck.js';
 import { createRunner } from './runs/runner.js';
 import { createTryLive } from './locators/tryLive.js';
 import { createSmoke } from './smoke/run.js';
@@ -24,7 +25,7 @@ const map = createScreenMap({ store, dataDir: DATA });
 for (const app of store.list('apps')) if (map.refreshElements(app.id) && app.workspace) { try { map.exportLocators(app.id); } catch {} }
 const captures = createCaptures({ store, lock, emit, map, openSession, attachSession, loops: { explore: (...a) => exploreLoop(...a) } });
 const generator = createGenerator({ store, map, emit });
-const converter = createConverter({ store, map, emit, generator, dataDir: DATA });
+const converter = createConverter({ store, map, emit, generator, dataDir: DATA, flowCheck: createFlowCheck({ lock, emit, openSession }) });
 const runner = createRunner({ store, lock, emit, dataDir: DATA, scriptPath: generator.scriptPath, preflightDeps: ({ specPath, build }) => realDeps({ specPath, build }) });
 const tryLive = createTryLive({ store, lock, dataDir: DATA });
 const smoke = createSmoke({ store, lock, emit, dataDir: DATA });

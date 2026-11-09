@@ -201,7 +201,8 @@ for (const t of plan.testcases) {
   for (const r of t.rows || []) if (r.keyword === 'Run flow') usedFlows.add(r.value);
   lintChecks(t);
 }
-for (const name of Object.keys(flows)) if (!usedFlows.has(name)) problems.push(`Luồng "${name}" khai báo nhưng không TC nào dùng`);
+// Luồng thừa không làm sai TC nào → chỉ cần review (không chặn ghi cả sheet)
+for (const name of Object.keys(flows)) if (!usedFlows.has(name)) review.push(`Luồng "${name}" khai báo nhưng không TC nào dùng`);
 lintChains();
 
 // ---- Quy tắc xếp chuỗi (SKILL.md bước 4): 1 TC lỗi không kéo cả file Blocked theo
@@ -311,8 +312,9 @@ for (const sheet of sheets) {
     const fw = wb.addWorksheet('Flows');
     fw.columns = [['Flow', 20], ['Step', 6], ['Screen', 17], ['Kind', 8], ['Keyword', 17], ['Target', 26], ['Value', 30], ['Compare', 14],
       ['Platform', 9], ['Check label', 32]].map(([header, width]) => ({ header, key: header, width }));
+    // Luồng chưa khai báo: đã ghi vào problems ở bước kiểm → bỏ qua ở đây (không crash, để lỗi được báo rõ cho từng TC)
     for (const name of myFlows)
-      for (const r of flows[name]) {
+      for (const r of Array.isArray(flows[name]) ? flows[name] : []) {
         fw.addRow({
           Flow: name, Step: r.step, Screen: r.screen, Kind: r.kind, Keyword: r.keyword, Target: r.target ?? '', Value: r.value ?? '',
           Compare: r.compare ?? '', Platform: r.platform || 'All', 'Check label': r.label ?? '',
@@ -346,5 +348,5 @@ console.log(`Case gốc: ${original.size} · chọn ${sel} · automation ${auto.
 console.log(`Test tay (giữ trong file gốc):\n${plan.manual.map((m) => `  ${m.tc}: ${m.reason}`).join('\n')}`);
 if (hooks.size) console.log(`\nHook cần dev cung cấp (Run setup / Run check):\n- ${[...hooks].join('\n- ')}`);
 if (review.length) console.log(`\nCần review (so sánh lỏng, ghi lý do trong báo cáo):\n- ${review.join('\n- ')}`);
-if (problems.length) { console.log(`\nLỖI (${problems.length}):\n- ${problems.slice(0, 40).join('\n- ')}`); process.exit(1); }
+if (problems.length) { console.log(`\nLỖI (${problems.length}):\n- ${problems.join('\n- ')}`); process.exit(1); }
 console.log('Độ phủ + format v2: OK');

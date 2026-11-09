@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../api.js';
+import { genScripts } from '../genScripts.js';
 import { useEvents } from '../useEvents.js';
 import { Icon } from '../components/Icon.jsx';
 import { Empty, ErrorNote, PageHeader } from '../components/ui.jsx';
@@ -112,7 +113,7 @@ export function TestCases({ apps }) {
     setErr(null);
     try {
       const ids = only || Object.keys(sel).filter((k) => sel[k]);
-      await api.post(`/apps/${appId}/scripts/generate`, { caseIds: ids });
+      await genScripts(appId, ids);
       setMsg(`Đang gen script cho ${ids.length} case — trạng thái cập nhật trực tiếp trong bảng.`);
     } catch (e) { setErr(e); }
   };
@@ -196,7 +197,9 @@ export function TestCases({ apps }) {
   const showScriptCol = inFile.some((c) => c.script.status !== 'generated');
   const fmtD = (iso) => (iso ? new Date(iso).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }) : '');
   const impAt = (list) => fmtD(list.map((c) => c.importedAt).filter(Boolean).sort()[0]);
-  const srcManual = manuals.find((m) => cur.startsWith(m.stem));
+  // File automation sinh từ import nào: tên file = <stem import>-… → lấy import có stem khớp DÀI NHẤT
+  // (vd "onboarding-v1-0-4-v2-…" thuộc import "onboarding-v1-0-4-v2", không phải "onboarding-v1-0-4")
+  const srcManual = manuals.filter((m) => cur === m.stem || cur.startsWith(`${m.stem}-`)).sort((a, b) => b.stem.length - a.stem.length)[0];
   const goRun = () => nav(`/apps/${appId}/run?${new URLSearchParams({ cases: picked.join(','), ...(cur ? { file: cur } : {}) })}`);
   const genAll = () => {
     const min = Math.ceil((todo.length / 3) * 1.5);

@@ -146,3 +146,19 @@ test('convertSheet: onSkeleton một lần, onGroup mỗi nhóm viết xong; có
   assert.equal(r2.ok, true, r2.problems.join('; '));
   assert.equal(ai2.skeleton, 0);
 });
+
+// Chuyển lại một phần (khung đã lập + case đã viết xong): case cũ giữ nguyên từng dòng, không lập lại khung, chỉ viết case cần viết
+test('convertSheet chuyển lại một phần: khoá case đã xong, chỉ viết case lỗi; lỗi lặp chỉ viết lại case lỗi', async () => {
+  const cases = mk(3);
+  const skeleton = { order: cases.map((c, i) => ({ id: c.id, fresh: i === 0 })), groups: [cases.map((c) => c.id)], flows: {} };
+  const keep1 = good('TC_W_001', true);
+  const keep2 = { ...good('TC_W_002', false), rows: [...good('TC_W_002', false).rows.map((r) => ({ ...r, compare: 'contains' }))] }; // contains: hậu kiểm bình thường sẽ đổi → khoá thì giữ nguyên
+  const cache = { TC_W_001: keep1, TC_W_002: keep2 };
+  // case 3: lần đầu thiếu label (lỗi) → lần 2 đúng
+  const ai = fakeAi((id, fresh, n) => (n === 1 ? noLabel(id, fresh) : good(id, fresh)));
+  const r = await convertSheet({ sheet: { sheet: 'Welcome', cases }, decisions: decisions(cases), runClaude: ai, outDir: tmpDir(), cache, skeleton });
+  assert.equal(r.ok, true, r.problems.join('; '));
+  assert.equal(ai.skeleton, 0);
+  assert.deepEqual(ai.rowsCalls, [['TC_W_003'], ['TC_W_003']]);
+  assert.deepEqual(r.plans.TC_W_002.rows, keep2.rows);
+});

@@ -18,6 +18,11 @@ export default function scriptRoutes({ store, emit, generator }) {
     if (app.status !== 'ready') return res.status(409).json({ error: 'App chưa sẵn sàng' });
     const ids = (req.body?.caseIds || []).filter((id) => store.get('cases', id)?.appId === app.id);
     if (!ids.length) return res.status(400).json({ error: 'Chưa chọn case' });
+    // Case đã sửa tay: gen lại sẽ ghi đè code sửa tay → phải xác nhận (body.force)
+    const hand = ids.map((id) => store.get('cases', id)).filter((c) => c?.script?.editedByHand);
+    if (hand.length && !req.body?.force) {
+      return res.status(409).json({ error: `Case đã sửa tay: ${hand.map((c) => c.tcId).join(', ')} — gen lại sẽ ghi đè code sửa tay. Xác nhận để gen lại (force).`, editedByHand: hand.map((c) => c.id) });
+    }
     generator.generate(app.id, ids).catch((e) => console.error('generate:', e)); // chạy nền, tiến độ qua SSE "script"
     res.status(202).json({ queued: ids.length });
   }));
@@ -50,7 +55,7 @@ export default function scriptRoutes({ store, emit, generator }) {
     const app = appOf(req);
     const saved = await generator.saveFile(app, req.params.file, String(req.body?.code || ''), req.body?.hash);
     if (saved.conflict) return res.status(409).json({ error: 'File đã thay đổi trên server (vừa gen / lưu ở chỗ khác). Tải lại rồi sửa tiếp.' });
-    if (saved.error) return res.status(400).json({ error: `Code lỗi cú pháp, chưa lưu:\n${saved.error}` });
+    if (saved.error) return res.status(400).json({ error: saved.regionError ? saved.error : `Code lỗi cú pháp, chưa lưu:\n${saved.error}` });
     for (const c of generator.casesOf(app.id, req.params.file)) {
       if (saved.changed.includes(c.tcId)) {
         const script = { ...c.script, status: 'generated', editedByHand: true, reviewed: false };

@@ -108,3 +108,46 @@ test('suggest: AI đọc locator map điền sẵn gợi ý cho case có điểm
   await e.conv.suggest(mi.id); // lần hai: đã có gợi ý → không gọi lại
   assert.equal(e.seen.suggest, 1);
 });
+
+test('suggest({ cases }): gợi ý lại đúng case được chỉ định dù đã có gợi ý cũ (người dùng xoá ô); case đã trả lời vẫn bị bỏ qua', async () => {
+  const e = env();
+  const mi = await analyze(e, await sheetWith(e, [mcase(1), mcase(3)]));
+  e.conv.clarify(mi.id, { sheet: 'Welcome', tcId: 'TC_W_003', answers: { EMPTY_PRE: 'x', NO_QUOTED_EXPECTED: 'y' } });
+  await e.conv.suggest(mi.id);
+  assert.equal(e.seen.suggest, 1);
+  await e.conv.suggest(mi.id, { cases: [{ sheet: 'Welcome', tcId: 'TC_W_001' }, { sheet: 'Welcome', tcId: 'TC_W_003' }] });
+  assert.equal(e.seen.suggest, 2, 'gọi lại cho case đã có gợi ý');
+  assert.match(e.seen.suggestPrompt, /TC_W_001/);
+  assert.doesNotMatch(e.seen.suggestPrompt, /TC_W_003/, 'case đã trả lời không gợi ý lại');
+});
+
+test('convert({ fresh: true }): chuyển lại TỪ ĐẦU — bỏ plan + khung cũ, viết lại mọi case automate (ghi đè đúng file automation cũ); không fresh thì không làm gì', async () => {
+  const e = env();
+  const mi = await analyze(e, await sheetWith(e, [mcase(1), mcase(2)]));
+  await e.conv.convert(mi.id);
+  const file = e.conv.get(mi.id).cases[0].outFile;
+  const n = e.seen.rows.length;
+  await e.conv.convert(mi.id); // không có gì chờ → không gọi AI
+  assert.equal(e.seen.rows.length, n);
+  await e.conv.convert(mi.id, { fresh: true });
+  assert.ok(e.seen.rows.length > n);
+  const after = e.conv.get(mi.id);
+  assert.deepEqual(after.cases.map((c) => c.state), ['converted', 'converted']);
+  assert.equal(after.cases[0].outFile, file); // cùng file automation, không tạo file mới
+});
+
+test('lệch tài liệu: specChoose "doc" → case chờ chuyển lại nhưng dùng lại plan (không gọi AI viết lại), lần chuyển sau đổi Check về chữ tài liệu', async () => {
+  const e = env();
+  const mi = await analyze(e, await sheetWith(e, [mcase(1)]));
+  await e.conv.convert(mi.id);
+  // giả lập: lần chuyển trước ghi lệch tài liệu cho case này
+  const cur = e.store.get('manualImports', mi.id);
+  cur.cases[0].specDiffs = [{ step: 1, manual: 'How old are you?', app: 'Which age group are you in?', fixed: false }];
+  e.store.put('manualImports', cur);
+  const out = e.conv.specChoose(mi.id, { sheet: 'Welcome', tcId: 'TC_W_001', step: 1, manual: 'How old are you?', app: 'Which age group are you in?', choice: 'doc' });
+  const c = out.cases[0];
+  assert.equal(c.specChoice['1|How old are you?'], 'doc');
+  assert.equal(c.state, 'pending');
+  assert.ok(c.cached && c.plan); // giữ plan → không tốn AI
+  assert.throws(() => e.conv.specChoose(mi.id, { sheet: 'Welcome', tcId: 'TC_W_001', step: 1, manual: 'x', app: 'y', choice: 'khác' }), (err) => err.status === 400);
+});

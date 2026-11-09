@@ -17,3 +17,17 @@ test('bước nhập "hợp lệ" → VAGUE_STEP, kèm chữ gây mờ trong tex
 test('nhiều điểm mờ cùng lúc → báo đủ, đúng thứ tự', () => {
   assert.deepEqual(codes({ pre: '', expected: 'Hiển thị đúng', steps: 'Nhập giá trị phù hợp' }), ['NO_QUOTED_EXPECTED', 'EMPTY_PRE', 'VAGUE_STEP']);
 });
+test('Expected có số kèm đơn vị → đủ cụ thể, không hỏi', () => {
+  assert.deepEqual(codes({ expected: 'Danh sách có đủ 8 dòng 90 → 125 mg/dL, không thiếu / trùng dòng' }), []);
+  assert.deepEqual(codes({ expected: 'Hiển thị 72 bpm' }), []);
+  assert.deepEqual(codes({ expected: 'Cân nặng 60,5 kg' }), []);
+  assert.deepEqual(codes({ expected: 'Tiến độ 50%' }), []);
+  assert.deepEqual(codes({ expected: 'Hiển thị giờ 08:00' }), []);
+});
+test('số không kèm đơn vị (đếm số lượng) vẫn là điểm mờ', () => {
+  assert.deepEqual(codes({ expected: 'Hiển thị 8 dòng' }), ['NO_QUOTED_EXPECTED']);
+  assert.deepEqual(codes({ expected: 'Tap 2 lần chỉ lưu 1 bản ghi' }), ['NO_QUOTED_EXPECTED']);
+  assert.deepEqual(codes({ expected: 'Shows 3 items' }), ['NO_QUOTED_EXPECTED']);
+  assert.deepEqual(codes({ expected: 'Hiện 2 in danh sách' }), ['NO_QUOTED_EXPECTED']);
+  assert.deepEqual(codes({ expected: 'Sau 3 giây popup biến mất' }), ['NO_QUOTED_EXPECTED']);
+});

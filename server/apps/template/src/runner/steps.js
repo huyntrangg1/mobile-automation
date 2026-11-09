@@ -85,6 +85,23 @@ const ALERT_BUTTONS = {
   deny: ["Don't Allow", 'Ask App Not to Track', 'Không cho phép', 'Yêu cầu ứng dụng không theo dõi'],
 };
 const INTENT_TEXT = { allow: 'Cho phép', deny: 'Từ chối' };
+// Hộp thoại hệ thống KHÔNG có trong test case (mặc định SYSTEM_ALERT=smart): theo dõi quảng cáo (ATT) → từ chối;
+// xin quyền (thông báo, ảnh, camera, micro, vị trí, Health…) → cho phép để tính năng chạy được. Không phải hộp xin quyền → không tự bấm
+const TRACK_DENY = ['Ask App Not to Track', 'Yêu cầu ứng dụng không theo dõi'];
+const SMART_ALLOW = ['Allow Full Access', 'Allow While Using App', 'Allow', 'Cho phép truy cập đầy đủ', 'Cho phép khi dùng ứng dụng', 'Cho phép', 'Allow Once', 'Cho phép một lần'];
+// Nút "từ chối" chỉ có ở hộp XIN QUYỀN của hệ thống → dấu hiệu để phân biệt với alert của chính app (vd "Xoá? Cancel / OK")
+const PERMISSION_DENY = /^(don.?t allow|ask app not to track|limit access|keep only while using|không cho phép|yêu cầu ứng dụng không theo dõi|giới hạn quyền truy cập|chỉ giữ khi dùng ứng dụng)/i;
+export function smartPick(buttons) {
+  // Alert không phải hộp xin quyền (không có nút từ chối kiểu hệ thống) → không tự bấm gì (có thể là alert của app: xoá, đăng xuất…)
+  if (!buttons.some((b) => PERMISSION_DENY.test(normBtn(b)))) return null;
+  // "OK" chỉ hợp lệ khi đi kèm nút từ chối của hệ thống (vd quyền camera cũ: Don't Allow / OK)
+  // Hộp nâng quyền vị trí (Keep Only While Using / Change to Always Allow): giữ quyền khi dùng app — không tự nâng lên "luôn luôn"
+  for (const c of [...TRACK_DENY, 'Keep Only While Using', 'Chỉ giữ khi dùng ứng dụng', ...SMART_ALLOW, 'OK']) {
+    const b = buttons.find((x) => normBtn(x) === normBtn(c));
+    if (b) return b;
+  }
+  return null;
+}
 const normBtn = (s) => String(s ?? '').replace(/[‘’]/g, "'").toLowerCase().trim(); // iOS dùng nháy cong: Don’t Allow
 const alertIntent = (button) => INTENT_TEXT[normBtn(button)] || button;
 // Chữ đúng của nút trước (chữ cụ thể), rồi tới danh sách theo ý định
@@ -233,6 +250,48 @@ export function pickByText(target, els) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Popup trong app ngoài test case: nút đóng rõ ràng / chữ cho thấy là popup mời (đăng nhập, đánh giá, khuyến mãi, cập nhật…)
+// KHÔNG gồm Skip / Cancel / Bỏ qua: trên màn thường (onboarding) chúng là nút điều hướng thật, bấm sẽ bỏ qua cả luồng
+const OVERLAY_CLOSE = /^(close|x|✕|✖|×|xmark|xmark\.circle(\.fill)?|dismiss|not now|maybe later|no,? thanks?|later|đóng|để sau|không,? cảm ơn)$/i;
+// Câu mời kiểu popup (không phải link "Log in" thường gặp trên màn): sign in to…, save your…, rate us, bật thông báo, ưu đãi, cập nhật
+const OVERLAY_HINT = /sign ?in to |log ?in to |create (an |your )?account|save your |keep your .* (safe|synced)|rate (us|the app|this app|our app)|enjoying (the|this|our)? ?app|leave (us )?a review|turn on (push )?notifications|special offer|limited[- ]time offer|update available|new version (is )?available|đăng nhập để|đánh giá ứng dụng|bật thông báo|ưu đãi đặc biệt|có phiên bản mới/i;
+// Nút mua / xác nhận thanh toán / đăng nhập bên thứ ba — tool không bao giờ tự bấm (đóng popup, bấm lại, AI chọn, đi theo sơ đồ màn)
+export const HARD_BUY = /\b(subscribe|buy|purchase|start (my |your )?(free )?trial|try (it )?free|get premium|upgrade|pay|confirm purchase|1-tap buy|continue with (apple|google|facebook)|sign in with)\b|[$€£₫¥]\s?\d|\d\s?[$€£₫¥]/i;
+const BUY_WORD = HARD_BUY;
+const STALE_RE = /expired from the internal cache|stale element|either not present or it has expired/i;
+const overlayGaveUp = new Set(); // popup AI đã không tìm được nút đóng trong lần chạy này
+// Màn đang tải (không kết luận kẹt sớm khi thấy những dấu hiệu này trong page source)
+const LOADING = /loading|importing|please wait|processing|warming up|getting .{0,40}ready|preparing|generating|saving|syncing|uploading|downloading|analy[sz]ing|đang (tải|xử lý|chuẩn bị|tạo|lưu|đồng bộ)|ActivityIndicator|ProgressIndicator|ProgressBar|ProgressView/i;
+// B: chỗ kẹt AI đã bó tay trong lần chạy này (worker) → case sau kẹt y chỗ đó thì không hỏi lại
+const assistGaveUp = new Map();
+// Hook có sẵn (dùng khi src/hooks.js của dự án không khai báo cùng tên): vòng đời app — không cần viết code riêng
+const lifecycleArg = (env) => (driver.isAndroid ? { appId: env.BUNDLE_ID } : { bundleId: env.BUNDLE_ID });
+const appState = (env) => driver.execute('mobile: queryAppState', lifecycleArg(env)).catch(() => -1);
+const STATE = { 0: 'không rõ', 1: 'không chạy', 2: 'chạy nền (treo)', 3: 'chạy nền', 4: 'đang mở' };
+const notRunning = async ({ env }) => { const s = await appState(env); return { pass: s === 1 || s === 0, actual: STATE[s] || `trạng thái ${s}`, expected: 'không chạy' }; };
+const terminate = async ({ env }) => { await driver.execute('mobile: terminateApp', lifecycleArg(env)).catch(() => {}); };
+// Hook không kiểm tự động được trên iOS Simulator (không có API đọc): ghi "không kiểm tự động được — kiểm tay", không Blocked cả case
+const NO_API = 'iOS không cho đọc trạng thái này qua Appium — kiểm tay';
+export const UNVERIFIABLE_HOOKS = /^(notification_permission_(enabled|disabled|off|on|denied|granted|allowed)|app_data_cleared|user_plus_status_active|user_is_(free|plus|premium))$/i;
+export const BUILTIN_HOOKS = {
+  setup: {
+    kill_app: terminate, terminate_app: terminate, close_app: terminate, force_close_app: terminate,
+    uninstall_app: async ({ env }) => { await driver.execute('mobile: removeApp', lifecycleArg(env)); },
+    launch_app: async ({ env }) => { await driver.execute('mobile: activateApp', lifecycleArg(env)); },
+    background_app: async () => { await driver.execute('mobile: backgroundApp', { seconds: -1 }).catch(() => {}); },
+  },
+  check: {
+    app_process_terminated_before_relaunch: notRunning, app_killed_before_relaunch: notRunning, app_not_in_memory: notRunning,
+    app_went_to_background: async ({ env }) => { const s = await appState(env); return { pass: s === 2 || s === 3, actual: STATE[s] || `trạng thái ${s}`, expected: 'chạy nền' }; },
+    app_in_background: async ({ env }) => { const s = await appState(env); return { pass: s === 2 || s === 3, actual: STATE[s] || `trạng thái ${s}`, expected: 'chạy nền' }; },
+    app_not_running: notRunning, app_terminated: notRunning, app_killed: notRunning, app_closed: notRunning,
+    app_running: async ({ env }) => { const s = await appState(env); return { pass: s === 4, actual: STATE[s] || `trạng thái ${s}`, expected: 'đang mở' }; },
+    app_uninstalled: async ({ env }) => { const inst = await driver.execute('mobile: isAppInstalled', lifecycleArg(env)).catch(() => null); return { pass: inst === false, actual: inst ? 'vẫn còn cài' : inst === false ? 'đã gỡ' : 'không đọc được', expected: 'đã gỡ' }; },
+    app_installed: async ({ env }) => { const inst = await driver.execute('mobile: isAppInstalled', lifecycleArg(env)).catch(() => null); return { pass: inst === true, actual: inst ? 'đã cài' : 'chưa cài', expected: 'đã cài' }; },
+  },
+};
+// Một thao tác AI hỗ trợ → chữ cho tester đọc
+export const assistLabel = (a) => ({ use: `Dùng "${a.name || a.locator}" thay cho phần tử của script`, arrived: `Đã ở đúng màn (thấy "${a.name || a.locator}")`, tap: `Bấm "${a.name || a.locator}"`, type: `Nhập "${a.text}" vào "${a.name || a.locator}"`, swipe: `Vuốt ${a.text}`, back: 'Back', wait: 'Chờ 4s' }[a.action] || a.action);
 const firstLine = (e) => String(e?.message || e).split('\n')[0];
 // Lỗi không thấy phần tử để thao tác: dòng đầu nêu target + màn (report đặt bug đúng màn), dòng sau giữ lỗi gốc
 const notFound = (target, screen) => (e) => {
@@ -286,10 +345,21 @@ export function matchUrl(shown, expected) {
 }
 
 // vars: biến của TC ({{tên}} trong Value) — khung tạo 1 object / case, fill() của case đọc cùng object
-export function createSteps({ sa, logStep, snapshot, flowBug = () => {}, noteScreen = () => {}, summarize = async () => null, env = process.env, cwd = process.cwd(), tc = null, vars = {} }) {
+export function createSteps({ sa, logStep, snapshot, flowBug = () => {}, noteScreen = () => {}, summarize = async () => null, env = process.env, cwd = process.cwd(), tc = null, vars = {}, autoDismiss = true, watch = [] }) {
   const manual = env.MANUAL_FIX === '1' && !!env.HELP_DIR;
+  // AI hỗ trợ khi chạy (Run option): bước thao tác / điều hướng kẹt → AI gỡ kẹt; điểm kiểm không bao giờ qua đây. Sửa tay (manual) được ưu tiên
+  const assist = env.AI_ASSIST === '1' && !manual && !!env.QAPD_API && !!env.APP_ID;
+  // Số từ biến môi trường: '0' là 0 thật (không bị đổi thành mặc định)
+  const numEnv = (k, d) => (env[k] != null && env[k] !== '' && !Number.isNaN(Number(env[k])) ? Number(env[k]) : d);
+  const aiTimeout = numEnv('AI_TIMEOUT_MS', 60000); // mỗi lần gọi AI tối đa (không để 1 bước treo vài phút)
+  let aiCalls = 0;
+  const budget = () => aiCalls++ < numEnv('AI_ASSIST_BUDGET', 8); // số lần gọi AI tối đa cho 1 case
+  let directOk = false; // bước chặn luồng vừa rồi làm được ngay lần đầu (không nhờ tự tìm / bấm lại / AI) → mới ghi vào sơ đồ màn
+  let lastTapAt = 0; // thời điểm lần bấm gần nhất (chữ thoáng qua chỉ tính nếu thấy SAU lần bấm này)
+  let networkOff = false;
+  let stepTarget = null; // target của bước k đang chạy (xem trackTarget)
   // Hộp thoại hệ thống ngoài test case (vd ATT bật lên lúc mở app): deny (mặc định) | allow | off
-  const alertPolicy = String(env.SYSTEM_ALERT || 'deny').toLowerCase();
+  const alertPolicy = String(env.SYSTEM_ALERT || 'smart').toLowerCase();
   let lastStep = null; // nav / gone không có step → dùng step của thao tác gần nhất
   // Bước bấm ngay trước (bấm được nhưng app không chuyển màn → hỏi / sửa chính bước bấm): { step, screen, target, sel, press }
   let lastTap = null;
@@ -314,13 +384,17 @@ export function createSteps({ sa, logStep, snapshot, flowBug = () => {}, noteScr
     if (!els.length) return null;
     let loc = pickByText(target, els);
     let how = 'khớp chữ';
-    if (!loc && ai && env.QAPD_API && env.APP_ID) {
+    // AI chọn phần tử chỉ khi bật "AI hỗ trợ" (tốn AI, kết quả có thể sai) — và có giới hạn thời gian
+    if (!loc && ai && assist && budget()) {
       try {
-        const r = await fetch(`${env.QAPD_API}/apps/${encodeURIComponent(env.APP_ID)}/resolve`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ target, screen, kind, elements: els }) });
+        const r = await fetch(`${env.QAPD_API}/apps/${encodeURIComponent(env.APP_ID)}/resolve`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ target, screen, kind, elements: els }), signal: AbortSignal.timeout(aiTimeout) });
         loc = r.ok ? (await r.json()).locator : null;
         how = 'AI chọn';
       } catch { loc = null; }
     }
+    // Không bao giờ tự bấm nút mua / thanh toán, dù khớp chữ hay AI chọn
+    const el = loc && els.find((e) => e.locator === loc);
+    if (el && HARD_BUY.test(`${el.name || ''} ${el.label || ''}`)) return null;
     return loc ? { loc, how } : null;
   }
   const info_ = (text) => { if (env.LIVE_STEPS) { try { fs.appendFileSync(env.LIVE_STEPS, `${JSON.stringify({ at: Date.now(), type: 'info', tc, text })}\n`); } catch {} } };
@@ -339,6 +413,13 @@ export function createSteps({ sa, logStep, snapshot, flowBug = () => {}, noteScr
     lastStep = step;
     const ev = await snapshot(screen, { k: ui.loose(sel) }, anchor ? { k: ui.loose(anchor) } : {});
     sa.eq(step, label, actual, expected, ev.k, { keyword, target, value, screen });
+    // Vừa đóng popup ngoài test case để đọc bước kiểm này → ghi "lệch so với script" (cùng chỗ với AI hỗ trợ) để tester quyết định
+    if (pendingOverlay) {
+      const p = pendingOverlay;
+      pendingOverlay = null;
+      const entry = { at: Date.now(), tc, step, screen, target, kind: 'overlay', source: p.how === 'AI chỉ nút đóng' ? 'ai' : 'tool', error: `Popup ngoài test case${p.title ? ` "${p.title}"` : ''} che màn khi kiểm "${target}"`, how: 'retry', actions: [{ action: 'tap', locator: p.locator, name: p.name, text: '', reason: `Đóng popup ngoài test case${p.title ? ` "${p.title}"` : ''} (${p.how}) rồi kiểm lại — kết quả kiểm sau khi đóng: ${actual === expected ? 'đạt' : 'vẫn sai'}` }], tapRow: null };
+      if (env.REPORTS_DIR) { try { fs.appendFileSync(path.join(env.REPORTS_DIR, 'ai-assist.jsonl'), `${JSON.stringify(entry)}\n`); } catch {} }
+    }
   };
 
   // Phần tử chỉ có toạ độ (point:… tester chọn trên ảnh, không có tên): bấm được nhưng không kiểm hiển thị được →
@@ -361,22 +442,122 @@ export function createSteps({ sa, logStep, snapshot, flowBug = () => {}, noteScr
     } catch {}
     return null;
   }
+  // Tờ xin quyền Health (không phải alert, nằm trong cây phần tử): "Turn On All" rồi "Allow"
+  async function healthSheet() {
+    const on = '-ios predicate string:type == "XCUIElementTypeButton" AND (name == "Turn On All" OR label == "Turn On All" OR name == "Bật tất cả")';
+    if (!(await ui.exists(on, 500))) return false;
+    await ui.tap(on);
+    const ok = '-ios predicate string:type == "XCUIElementTypeButton" AND (name == "Allow" OR label == "Allow" OR name == "Cho phép")';
+    if (await ui.exists(ok, 2000)) await ui.tap(ok);
+    logStep({ kind: 'Action', step: lastStep, screen: 'Quyền Health', keyword: 'Tap', target: 'Turn On All → Allow', value: '', ok: true, note: 'Tờ xin quyền Health không có trong test case' });
+    return true;
+  }
   // Có hộp thoại hệ thống đang che màn → đóng theo SYSTEM_ALERT, ghi bước (không phải bug). true nếu đã đóng
   async function dismissUnexpected() {
     if (alertPolicy === 'off') return false;
     const buttons = await alertButtons();
-    const pick = buttons.length ? pickAlertButton(buttons, alertPolicy) : null;
-    if (!pick) return false;
+    // Bước ĐANG CHẠY nhắm vào chính nút của hộp thoại này (Tap "Allow", chờ / kiểm nút "Don't Allow"…) → để bước đó tự làm.
+    // Hộp thoại bật lên ở bước khác vẫn tự đóng như thường, kể cả khi case có bước xử lý một hộp thoại khác ở chỗ khác
+    if (stepTarget && buttons.some((b) => normBtn(b) === normBtn(stepTarget))) return false;
+    const pick = buttons.length ? (alertPolicy === 'smart' ? smartPick(buttons) : pickAlertButton(buttons, alertPolicy)) : null;
+    if (!pick) return (alertPolicy === 'smart' || alertPolicy === 'allow') && !driver.isAndroid ? healthSheet() : false;
     if (driver.isAndroid) await ui.tap(`android=new UiSelector().text(${JSON.stringify(pick)})`);
     else await driver.execute('mobile: alert', { action: 'accept', buttonLabel: pick });
     logStep({ kind: 'Action', step: lastStep, screen: 'Hộp thoại hệ thống', keyword: 'Tap', target: pick, value: '', ok: true, note: 'Hộp thoại hệ thống không có trong test case' });
     return true;
   }
+  // Chờ phần tử; hộp thoại hệ thống ngoài test case bật lên giữa chừng (vd ATT sau khi bấm Get Started) → đóng ngay rồi chờ tiếp,
+  // không đợi hết giờ mới đóng (mỗi lần mất ~15s). Case có bước xử lý hộp thoại (autoDismiss = false) → chờ như cũ, đi theo test case
+  // Phát hiện kẹt sớm (EARLY_STUCK=0 để tắt): chờ ≤ 20s mà màn đứng yên (page source không đổi) ≥ STUCK_MS và không có dấu hiệu
+  //   đang tải → kết luận luôn, không chờ hết giờ (app đã đứng ở màn khác thì chờ thêm cũng vô ích). Chờ dài hơn 20s (tác vụ chạy lâu:
+  //   import, AI, tải mạng) vẫn chờ đủ. Màn có animation / đồng hồ chạy → page source đổi liên tục → không bao giờ kết luận sớm.
+  async function waitEl(sel, timeout = 15000, { early: earlyOk = true } = {}) {
+    const dismiss = alertPolicy !== 'off';
+    // Thời gian chờ tester tự đặt (Wait until displayed N giây) → chờ đủ, không kết luận sớm
+    const early = earlyOk && env.EARLY_STUCK !== '0' && timeout <= 20000;
+    if ((!dismiss && !early) || timeout <= 2000) return ui.el(sel, timeout);
+    const stuckMs = Number(env.STUCK_MS) || 5000;
+    let prev = null;
+    let stable = 0;
+    let waited = 0;
+    // Đếm theo thời gian đã chờ từng lượt (không theo đồng hồ) → luôn dừng, kể cả khi tìm phần tử báo lỗi ngay
+    for (let left = timeout; ; ) {
+      const slice = Math.max(300, Math.min(1500, left));
+      try {
+        return await ui.el(sel, slice);
+      } catch (e) {
+        left -= slice;
+        waited += slice;
+        if (left <= 0 || !/still not existing|timed? ?out/i.test(String(e?.message || e))) throw e;
+        if (early) {
+          const src = await Promise.resolve().then(() => driver.getPageSource()).catch(() => null);
+          stable = src && src === prev ? stable + slice : 0;
+          prev = src;
+          if (stable >= stuckMs && waited >= stuckMs + 1500 && !LOADING.test(src)) throw new Error(`${firstLine(e)} — màn đứng yên ${Math.round(stable / 1000)}s, không đang tải → kết luận sớm`);
+        }
+      }
+      if (dismiss && (await dismissUnexpected())) { stable = 0; prev = null; }
+    }
+  }
   // Đọc giá trị điểm kiểm; sai mà có hộp thoại hệ thống che → đóng rồi đọc lại
+  // Đọc giá trị điểm kiểm; sai mà có hộp thoại hệ thống che → đóng rồi đọc lại.
+  // Vẫn KHÔNG THẤY phần tử cần kiểm (null / false / rỗng — không phải "thấy nhưng sai chữ") mà màn đang có popup trong app ngoài
+  // test case (tờ mời đăng nhập, đánh giá, khuyến mãi…) → đóng popup như người test tay rồi đọc lại 1 lần. Không đổi cách so kết quả.
   const measure = async (get, ok) => {
-    const v = await get();
-    return !ok(v) && (await dismissUnexpected()) ? get() : v;
+    let v = await get();
+    if (!ok(v) && (await dismissUnexpected())) v = await get();
+    if (!ok(v) && (v == null || v === false || v === '') && (await closeOverlay())) v = await get();
+    return v;
   };
+  // Popup trong app che màn (không phải hộp thoại hệ thống): tìm nút đóng rõ ràng (X / Close / Not now…) khi màn có dấu hiệu popup ngoài
+  // luồng; không chắc thì nhờ AI (khi bật AI hỗ trợ) chỉ ra nút đóng — AI chỉ được đóng, không bấm mua / đăng nhập. CLOSE_POPUPS=0 để tắt
+  let overlayClosed = 0;
+  // Chữ thoáng qua test case cần kiểm (Importing…, Loading…): xem page source ngay sau mỗi lần bấm, thấy thì nhớ thời điểm —
+  // tới bước kiểm mà chữ đã qua (app chạy nhanh) vẫn tính là đã hiện. Chỉ chạy khi case có chữ kiểu này (khung truyền `watch`)
+  const seenAt = new Map();
+  const norm = (t) => String(t).replace(/\.\.\./g, '…').replace(/\s+/g, ' ').trim().toLowerCase();
+  async function peek() {
+    const left = watch.filter((w) => !seenAt.has(w));
+    if (!left.length) return;
+    let src = '';
+    try { src = norm((await driver.getPageSource()).replace(/&#10;/g, ' ').replace(/&amp;/g, '&')); } catch { return; }
+    for (const w of left) if (src.includes(norm(w))) seenAt.set(w, Date.now());
+  }
+  const isWatched = (t) => watch.some((w) => norm(w) === norm(t));
+  // Bước kiểm không làm được (chữ thoáng qua không kịp thấy, hook không có API): ghi riêng — report để vào mục "không kiểm được", không thành bug
+  function noteUnverified(x) {
+    if (!env.REPORTS_DIR) return;
+    try { fs.appendFileSync(path.join(env.REPORTS_DIR, 'unverified.jsonl'), `${JSON.stringify({ at: Date.now(), tc, ...x })}\n`); } catch {}
+  }
+  let pendingOverlay = null; // popup vừa đóng → bước kiểm kế tiếp ghi lệch so với script
+  async function closeOverlay() {
+    if (env.CLOSE_POPUPS === '0' || overlayClosed >= 3) return false;
+    let xml = '';
+    try { xml = await driver.getPageSource(); } catch { return false; }
+    const els = screenElements(xml, driver.isAndroid);
+    const label = (e) => String(e.name || e.label || '').trim();
+    const hint = els.find((e) => OVERLAY_HINT.test(label(e)));
+    const closers = els.filter((e) => OVERLAY_CLOSE.test(label(e)) && !BUY_WORD.test(label(e)));
+    let pick = hint && closers.length ? { locator: closers[0].locator, name: label(closers[0]), how: 'nút đóng' } : null;
+    if (!pick && assist && hint && !overlayGaveUp.has(label(hint)) && budget()) {
+      try {
+        const r = await fetch(`${env.QAPD_API}/apps/${encodeURIComponent(env.APP_ID)}/assist`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tc, step: lastStep, screen: prevAct?.screen || '', target: '', kind: 'overlay', error: 'Bước kiểm không thấy phần tử cần kiểm — có thể bị popup che', elements: els, tried: [] }), signal: AbortSignal.timeout(aiTimeout) });
+        const a = r.ok ? await r.json() : null;
+        if (a?.action === 'tap' && a.locator && !BUY_WORD.test(a.name || '')) pick = { locator: a.locator, name: a.name || a.locator, how: 'AI chỉ nút đóng', reason: a.reason };
+      } catch {}
+      if (!pick) overlayGaveUp.add(label(hint));
+    }
+    if (!pick) return false;
+    try { await ui.tap(pick.locator, 2000); } catch { return false; }
+    overlayClosed++;
+    await sleep(800);
+    const title = hint ? label(hint) : pick.reason || '';
+    pendingOverlay = { title: hint ? label(hint) : '', name: pick.name, locator: pick.locator, how: pick.how };
+    const note = `Popup ngoài test case${title ? `: "${title}"` : ''} che màn khi kiểm — đã đóng (${pick.how}) rồi kiểm lại. Nếu popup này không đúng thiết kế, log bug riêng`;
+    info_(`Đóng popup ngoài test case${title ? ` "${title}"` : ''} (bấm "${pick.name}")`);
+    logStep({ kind: 'Action', step: lastStep, screen: 'Popup ngoài test case', keyword: 'Tap', target: pick.name, value: '', ok: true, note });
+    return true;
+  }
 
   // Màn lúc lỗi (ảnh + màn đang hiện) → bug "chặn luồng nhưng đã cho chạy tiếp"
   const evidence = async () => {
@@ -425,12 +606,16 @@ export function createSteps({ sa, logStep, snapshot, flowBug = () => {}, noteScr
     const retryRun = opts.retry || (() => run(start));
     const useRun = opts.use || run;
     let err;
+    directOk = false;
     try {
       await run(start);
+      directOk = true;
       return true;
     } catch (e) {
       err = e;
     }
+    // Phần tử hết hạn giữa chừng (app vẽ lại màn) → ném luôn để guardApi làm lại cả bước (không tốn AI / tự tìm)
+    if (STALE_RE.test(String(err?.message || err))) throw err;
     // Hộp thoại hệ thống ngoài test case che màn → đóng rồi làm lại 1 lần (k.alert là bước chủ động kiểm hộp thoại → không đóng)
     if (kind !== 'alert' && (await dismissUnexpected())) {
       try {
@@ -457,13 +642,25 @@ export function createSteps({ sa, logStep, snapshot, flowBug = () => {}, noteScr
             return true;
           }
           // Đã có locator lưu cho bước này (tester Fix / lần tự tìm trước) → không ghi đè: app có thể đang ở trạng thái khác
-          const saved = !!readOverrides(cwd)[saveKey];
+          const saved = !!readOverrides(cwd)[saveKey] || found.how === 'AI chọn'; // AI chọn: chỉ dùng lần này, không lưu
           if (!saved) saveOverride(cwd, saveKey, found.loc, `tự tìm (${found.how})`);
           info_(`Tự tìm "${info.target}" trên màn ${info.screen} (${found.how}) → ${found.loc}${saved ? ' — chỉ dùng lần này (giữ locator đã lưu)' : ' — đã lưu cho lần sau'}`);
           return true;
         } catch {}
       }
     }
+    // (Sau khi tự tìm theo chữ không ra) Bấm xong mà app chưa chuyển màn, nút vừa bấm vẫn đang hiện → bấm lại 1 lần (lần trước rơi vào lúc màn còn chuyển cảnh,
+    // như người test tay bấm lại). Không dùng AI, ghi log để biết
+    if (kind === 'nav' && opts.retry && lastTap?.kind === 'tap' && env.AUTO_RETAP !== '0' && typeof lastTap.sel === 'string' && !isPoint(lastTap.sel) && (await ui.visible(lastTap.sel, 500)) && !LOADING.test(await Promise.resolve().then(() => driver.getPageSource()).catch(() => ''))) {
+      info_(`Bấm lại "${lastTap.target}" trên màn ${lastTap.screen}: lần bấm trước app chưa chuyển sang ${info.screen}`);
+      try {
+        await opts.retry();
+        return true;
+      } catch (e) {
+        err = e;
+      }
+    }
+    if (assist && (await aiAssist(kind, info, err, { run, start, useRun, opts }))) return true;
     if (!manual) throw err;
     // Màn ngay lúc lỗi — không chụp lúc tester trả lời (app chậm có thể đã sang màn khác)
     const ev = await evidence();
@@ -504,6 +701,88 @@ export function createSteps({ sa, logStep, snapshot, flowBug = () => {}, noteScr
     }
   }
 
+  // AI hỗ trợ: tối đa AI_ASSIST_MAX (mặc định 4) thao tác cho 1 lần kẹt. Sau mỗi thao tác thử lại đúng bước của script.
+  // Gỡ được → ghi "lệch so với script" (REPORTS_DIR/ai-assist.jsonl + live) để tester chọn Áp dụng vào test case / Bỏ qua.
+  async function aiAssist(kind, info, err, { run, start, useRun, opts }) {
+    const max = numEnv('AI_ASSIST_MAX', 4);
+    const dir = env.REPORTS_DIR ? path.join(env.REPORTS_DIR, 'ai-assist') : null;
+    if (dir) fs.mkdirSync(dir, { recursive: true });
+    const done = [];
+    const tried = [];
+    const error = firstLine(err);
+    const tapRow = opts.ask ? { ...opts.ask.info, kind: opts.ask.kind } : null; // kẹt ở chờ màn sau bước bấm → dòng bấm là gốc
+    const memo = `${kind}|${info.screen}|${info.target}|${error.replace(/\d+(\.\d+)?s\b/g, '')}`;
+    const seen = assistGaveUp.get(memo);
+    if (seen) {
+      info_(`AI hỗ trợ: chỗ kẹt này AI đã xem ở ${seen.tc} — "${seen.reason}" → không hỏi lại`);
+      return false;
+    }
+    info_(`AI hỗ trợ: kẹt ở ${info.screen}${info.target && info.target !== '(screen)' ? ` "${info.target}"` : ''} — nhờ AI xem màn`);
+    const record = (how) => {
+      const entry = { at: Date.now(), tc, step: info.step ?? lastStep, screen: info.screen, target: info.target, kind, error, how, actions: done, tapRow };
+      if (env.REPORTS_DIR) { try { fs.appendFileSync(path.join(env.REPORTS_DIR, 'ai-assist.jsonl'), `${JSON.stringify(entry)}\n`); } catch {} }
+      const what = done.map((a) => assistLabel(a)).join(' → ');
+      info_(`AI hỗ trợ: ${what} — đi tiếp (ghi lệch so với script)`);
+      logStep({ kind: 'Action', step: entry.step, screen: info.screen, keyword: 'AI hỗ trợ', target: what, value: '', ok: true, note: `Lệch so với script: ${done.map((a) => a.reason).filter(Boolean).join(' / ')}` });
+      return true;
+    };
+    for (let i = 0; i < max; i++) {
+      let xml = '';
+      try { xml = await driver.getPageSource(); } catch {}
+      const elements = screenElements(xml, driver.isAndroid);
+      let shot = null;
+      if (dir) { shot = path.join(dir, `${Date.now()}.png`); await browser.saveScreenshot(shot).catch(() => { shot = null; }); }
+      let a = null;
+      if (!budget()) { info_('AI hỗ trợ: đã hết lượt gọi AI cho case này (AI_ASSIST_BUDGET) — giữ lỗi của script'); return false; }
+      try {
+        const r = await fetch(`${env.QAPD_API}/apps/${encodeURIComponent(env.APP_ID)}/assist`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tc, step: info.step ?? lastStep, screen: info.screen, target: info.target, kind, error, elements, shot, tried }), signal: AbortSignal.timeout(aiTimeout) });
+        a = r.ok ? await r.json() : null;
+      } catch { a = null; }
+      if (!a || ['giveUp', 'refused'].includes(a.action)) {
+        if (a?.action === 'giveUp' && !done.length) assistGaveUp.set(memo, { tc, reason: String(a.reason || '').slice(0, 160) });
+        info_(`AI hỗ trợ: dừng — ${a?.reason || 'không gọi được AI'}`);
+        return false;
+      }
+      if (kind === 'nav' && a.action === 'use') a.action = 'arrived';
+      a.shot = shot;
+      tried.push(assistLabel(a));
+      try {
+        if (a.action === 'use') { await useRun(a.locator); done.push(a); return record('use'); }
+        if (a.action === 'arrived') {
+          // "Đã ở đúng màn" phải có bằng chứng: phần tử AI chỉ ra khớp tên màn / dấu hiệu màn trong script (≥ 0.85), không phải phần tử bất kỳ
+          const want = [ui.selText(start), info.screen, info.target].filter((x) => x && x !== '(screen)');
+          const name = String(a.name || ui.selText(a.locator) || '').toLowerCase();
+          const close = want.some((w) => { const x = String(w).toLowerCase(); return name === x || (name.length > 3 && (name.includes(x) || x.includes(name))) || dice(name, x) >= 0.85; });
+          if (kind !== 'nav' || !close || !(await ui.exists(a.locator, 3000))) throw new Error('không ở màn đích');
+          done.push(a);
+          return record('arrived');
+        }
+        if (a.action === 'tap') await ui.tap(a.locator, 3000);
+        else if (a.action === 'type') await ui.typeInto(a.locator, a.text);
+        else if (a.action === 'back') await (driver.isAndroid ? driver.back() : ui.tap(BACK_BUTTON, 3000));
+        else if (a.action === 'swipe') await swipeDir(a.text);
+        else if (a.action === 'wait') await sleep(4000);
+        done.push(a);
+      } catch {
+        tried[tried.length - 1] += ' (không làm được)';
+        continue;
+      }
+      await sleep(800);
+      await dismissUnexpected();
+      try {
+        await run(start);
+        return record('retry');
+      } catch {}
+    }
+    info_(`AI hỗ trợ: thử ${max} lần không gỡ được — giữ lỗi của script`);
+    return false;
+  }
+  async function swipeDir(dir) {
+    const { width: w, height: h } = await driver.getWindowSize();
+    const [sx, sy, ex, ey] = { up: [0.5, 0.7, 0.5, 0.3], down: [0.5, 0.3, 0.5, 0.7], left: [0.8, 0.5, 0.2, 0.5], right: [0.2, 0.5, 0.8, 0.5] }[dir] || [0.5, 0.7, 0.5, 0.3];
+    await ui.drag(sx * w, sy * h, ex * w, ey * h);
+  }
+
   // nav / gone ngay sau một bước bấm: lỗi thuộc về bước bấm (bấm được nhưng app không chuyển) → hỏi / sửa bước bấm
   const afterTap = (screen, wait) => {
     const t = lastTap;
@@ -516,7 +795,19 @@ export function createSteps({ sa, logStep, snapshot, flowBug = () => {}, noteScr
     };
   };
 
-  return guardApi({
+  // Bước đang chạy nhắm vào phần tử nào (target của k.xxx(step, screen, target…); nav: chữ của dấu hiệu màn) → dismissUnexpected không
+  // tự đóng đúng hộp thoại mà bước đó cần thao tác
+  const trackTarget = (api) => {
+    for (const [name, fn] of Object.entries(api)) {
+      if (typeof fn !== 'function' || name === 'fill' || name === 'byText' || name === 'textOf') continue;
+      api[name] = function (...args) {
+        stepTarget = name === 'nav' ? ui.selText(args[1]) : typeof args[2] === 'string' ? args[2] : null;
+        return fn.apply(this, args);
+      };
+    }
+    return api;
+  };
+  return guardApi(trackTarget({
     byText,
     textOf,
     // Tap: sel mặc định = theo chữ của target
@@ -526,9 +817,11 @@ export function createSteps({ sa, logStep, snapshot, flowBug = () => {}, noteScr
       if (!sel && TRACKING.test(String(target))) return this.alert(step, screen, target, { target });
       const guess = !sel;
       sel ||= byText(target);
-      const press = (s) => (isPoint(s) ? tapPoint(s) : ui.tap(s, guess && s === byText(target) ? 1500 : undefined).catch(notFound(target, screen)));
+      const press = (s) => (isPoint(s) ? tapPoint(s) : (guess && s === byText(target) ? ui.tap(s, 1500) : waitEl(s).then((e) => e.click())).catch(notFound(target, screen)));
       if (!(await guarded('tap', { step, screen, target }, sel, press))) return;
       act(step, screen, 'Tap', target);
+      lastTapAt = Date.now();
+      if (watch.length) await peek();
       lastTap = { step, screen, target, sel: used.get(`${screen}|${target}`) || readOverrides(cwd)[`${screen}|${target}`] || sel, press, verb: `Nhấn "${target}"`, kind: 'tap', typed: typedHere };
     },
     // Back: Android phím Back; iOS bấm nút Back / ← của màn (không vuốt — app có thể tắt vuốt mép).
@@ -556,11 +849,11 @@ export function createSteps({ sa, logStep, snapshot, flowBug = () => {}, noteScr
         logStep({ kind: 'Action', step: lastStep, screen, keyword: 'Verify screen', target: screen, value: '', ok: true, note: `Không kiểm được đã tới màn ${screen}: dấu hiệu nhận màn (${what}) chỉ có toạ độ — dùng tiêu đề màn` });
         return;
       }
-      const wait = (s) => ui.el(s, timeout).catch(() => { throw new Error(`Không tới được màn ${screen}: không thấy ${what} sau ${timeout / 1000}s`); });
+      const wait = (s) => waitEl(s, timeout).catch(() => { throw new Error(`Không tới được màn ${screen}: không thấy ${what} sau ${timeout / 1000}s`); });
       await guarded('nav', { step: lastStep, screen, target: '(screen)' }, sel, wait, afterTap(screen, () => wait(sel)));
       // Tới được màn sau một bước bấm → ghi cạnh vào sơ đồ màn (dùng để điều hướng khi case trước lỗi)
       const t = lastTap;
-      if (t && !t.recorded && t.kind === 'tap' && t.screen !== screen) {
+      if (t && !t.recorded && t.kind === 'tap' && t.screen !== screen && directOk) {
         t.recorded = true;
         recordEdge({ from: t.screen, to: screen, sel: t.sel, target: t.target, arrive: { sel, what }, needsInput: !!t.typed }, { cwd });
       }
@@ -576,7 +869,17 @@ export function createSteps({ sa, logStep, snapshot, flowBug = () => {}, noteScr
         seen = await seeOnScreen(target);
         return Boolean(seen);
       };
-      const v = await measure(read, (x) => x === true);
+      let v = await measure(read, (x) => x === true);
+      if (v !== true && isWatched(target)) {
+        await peek();
+        const w = watch.find((x) => norm(x) === norm(target));
+        if (seenAt.has(w) && seenAt.get(w) >= lastTapAt) v = true;
+        else {
+          logStep({ kind: 'Action', step, screen, keyword: 'Verify displayed', target, value: '', ok: true, note: `Không kiểm được: chữ thoáng qua "${target}" không kịp thấy (app chạy quá nhanh) — kiểm tay` });
+          noteUnverified({ step, screen, target, label, why: `Chữ thoáng qua "${target}" không kịp thấy` });
+          return;
+        }
+      }
       await check(step, screen, 'Verify displayed', target, '', label, seen || sel, v, true, seen ? undefined : anchor);
     },
     // within (giây, từ Value): chờ ngược — phần tử xuất hiện trong N giây → sai; hết N giây không thấy → đúng (kiểm "không chuyển màn")
@@ -620,6 +923,20 @@ export function createSteps({ sa, logStep, snapshot, flowBug = () => {}, noteScr
         return got;
       };
       let got = await measure(until, okOf);
+      // Chữ thoáng qua (Importing…, Loading…) không còn khi tới bước kiểm: đã thấy ngay sau lần bấm trước → tính là đã hiện;
+      // không kịp thấy → "không kiểm được" (ghi riêng, không thành bug). Chữ có nhưng sai → vẫn so như thường
+      if (got == null && actual === undefined && isWatched(expected)) {
+        await peek();
+        const w = watch.find((x) => norm(x) === norm(expected));
+        if (seenAt.has(w) && seenAt.get(w) >= lastTapAt) {
+          logStep({ kind: 'Action', step, screen, keyword: 'Verify text', target, value: String(expected), ok: true, note: `Chữ thoáng qua "${expected}" đã hiện ngay sau thao tác trước (${((Date.now() - seenAt.get(w)) / 1000).toFixed(1)}s trước bước kiểm), tới bước kiểm thì app đã chuyển tiếp` });
+          got = String(expected);
+        } else {
+          logStep({ kind: 'Action', step, screen, keyword: 'Verify text', target, value: String(expected), ok: true, note: `Không kiểm được: chữ thoáng qua "${expected}" không kịp thấy (app chạy quá nhanh) — kiểm tay` });
+          noteUnverified({ step, screen, target, label, why: `Chữ thoáng qua "${expected}" không kịp thấy` });
+          return;
+        }
+      }
       // Phần tử không có trong page source (chữ vẽ trong hình, badge không tên) → tìm đúng chữ mong đợi trên ảnh
       let seen = null;
       if (got == null && actual === undefined && ['', 'equals', 'contains'].includes(compare)) {
@@ -777,10 +1094,17 @@ export function createSteps({ sa, logStep, snapshot, flowBug = () => {}, noteScr
     // ===== Chạm, nhập, cuộn =====
     async doubleTap(step, screen, target, sel = byText(target)) {
       const press = async (s) => {
+        // Phần tử chỉ có toạ độ (point:…) → chạm 2 lần nhanh tại điểm đó
+        if (isPoint(s)) { await tapPoint(s); await tapPoint(s); return; }
         const e = await ui.el(s).catch(notFound(target, screen));
         await driver.execute(driver.isAndroid ? 'mobile: doubleClickGesture' : 'mobile: doubleTap', { elementId: e.elementId });
       };
-      if (await guarded('tap', { step, screen, target }, sel, press)) act(step, screen, 'Double tap', target);
+      if (await guarded('tap', { step, screen, target }, sel, press)) {
+        act(step, screen, 'Double tap', target);
+        // Hộp thoại hệ thống bật lên ngay sau lần bấm đầu (vd ATT khi mới cài app) → lần bấm thứ 2 có thể đã bị hộp thoại nuốt:
+        // kết quả bấm đúp chưa đáng tin → ghi rõ (không tự sửa kết quả)
+        if (!driver.isAndroid && (await alertButtons()).length) logStep({ kind: 'Action', step, screen, keyword: 'Double tap', target, value: '', ok: true, note: 'Cảnh báo: hộp thoại hệ thống bật lên ngay sau lần bấm đầu — lần bấm thứ 2 có thể đã bị nuốt, kết quả bấm đúp chưa đáng tin (nên đi qua hộp thoại này trước khi bấm đúp)' });
+      }
     },
     async longPress(step, screen, target, sel = byText(target), seconds = 1) {
       const sec = Number(seconds) || 1;
@@ -789,6 +1113,14 @@ export function createSteps({ sa, logStep, snapshot, flowBug = () => {}, noteScr
         await driver.execute(driver.isAndroid ? 'mobile: longClickGesture' : 'mobile: touchAndHold', driver.isAndroid ? { elementId: e.elementId, duration: sec * 1000 } : { elementId: e.elementId, duration: sec });
       };
       if (await guarded('tap', { step, screen, target }, sel, press)) act(step, screen, 'Long press', target, String(sec));
+    },
+    // Close popup: popup / tờ trong app CÓ THỂ hiện (mời đăng nhập, đánh giá, khuyến mãi…) → hiện thì bấm nút đóng (target),
+    // không hiện trong `seconds` giây thì bỏ qua, không lỗi (popup kiểu này không phải lần nào cũng hiện)
+    async closePopup(step, screen, target = 'Close', sel = byText(target), seconds = 3) {
+      if (await ui.visible(sel, (Number(seconds) || 3) * 1000)) {
+        await ui.tap(sel, 2000);
+        act(step, screen, 'Close popup', target);
+      } else logStep({ kind: 'Action', step, screen, keyword: 'Close popup', target, value: '', ok: true, note: 'Popup không hiện — bỏ qua' });
     },
     // Tap outside: chạm vùng nền tối phía trên sheet / popup (sel = chính sheet; bỏ trống → gần mép trên màn)
     async tapOutside(step, screen, target, sel) {
@@ -923,9 +1255,16 @@ export function createSteps({ sa, logStep, snapshot, flowBug = () => {}, noteScr
     // Set network: chỉ Android (iOS không tắt mạng được qua Appium → lỗi rõ, dòng này phải để Platform = Android)
     async setNetwork(step, screen, value) {
       const on = /^(on|true|1|bật)$/i.test(String(value).trim());
-      if (!driver.isAndroid) throw new Error('Set network chỉ chạy trên Android — đặt Platform = Android cho dòng này');
+      // iOS Simulator dùng mạng của máy Mac, Appium không tắt được → case cần mất mạng = Skipped trên iOS (không phải Blocked)
+      if (!driver.isAndroid) throw Object.assign(new Error('iOS Simulator không giả lập mất mạng được (Set network chỉ chạy trên Android) — kiểm tay hoặc chạy trên Android'), { name: 'SkipCase' });
       await driver.execute('mobile: setConnectivity', { wifi: on, data: on });
+      networkOff = !on;
       act(step, screen, 'Set network', '', on ? 'on' : 'off');
+    },
+    // Dọn sau case (khung gọi trong finally): bật lại mạng nếu case tắt mà chưa bật
+    async cleanup() {
+      if (networkOff && driver.isAndroid) await driver.execute('mobile: setConnectivity', { wifi: true, data: true }).catch(() => {});
+      networkOff = false;
     },
     async wait(step, screen, seconds) {
       await driver.pause((Number(seconds) || 1) * 1000);
@@ -933,7 +1272,7 @@ export function createSteps({ sa, logStep, snapshot, flowBug = () => {}, noteScr
     },
     async waitDisplayed(step, screen, target, sel = byText(target), seconds = 10) {
       const ms = (Number(seconds) || 10) * 1000;
-      const run = (s) => ui.el(s, ms).catch(() => { throw new Error(`Không tới được màn ${screen}: "${target}" không hiện sau ${ms / 1000}s`); });
+      const run = (s) => waitEl(s, ms, { early: false }).catch(() => { throw new Error(`Không tới được màn ${screen}: "${target}" không hiện sau ${ms / 1000}s`); });
       if (await guarded('nav', { step, screen, target }, sel, run)) act(step, screen, 'Wait until displayed', target, String(seconds));
     },
     async waitNotDisplayed(step, screen, target, sel = byText(target), seconds = 10) {
@@ -971,7 +1310,7 @@ export function createSteps({ sa, logStep, snapshot, flowBug = () => {}, noteScr
     vars,
     // Run setup: hook dự án (src/hooks.js → setup[name]) — seed data, giả lập lỗi, đặt ngày…
     async runSetup(step, screen, name) {
-      const fn = (await loadHooks()).setup?.[name];
+      const fn = (await loadHooks()).setup?.[name] || BUILTIN_HOOKS.setup[String(name).toLowerCase()];
       if (typeof fn !== 'function') throw new Error(`Chưa khai báo hook setup "${name}" trong src/hooks.js`);
       await fn({ driver, vars, env });
       act(step, screen, 'Run setup', '', name);
@@ -1074,8 +1413,14 @@ export function createSteps({ sa, logStep, snapshot, flowBug = () => {}, noteScr
     },
     // Run check: hook kiểm phía backend (src/hooks.js → check[name]) trả { pass, actual?, expected? }
     async runCheck(step, screen, name, label) {
-      const fn = (await loadHooks()).check?.[name];
-      if (typeof fn !== 'function') throw new Error(`Chưa khai báo hook check "${name}" trong src/hooks.js`);
+      const fn = (await loadHooks()).check?.[name] || BUILTIN_HOOKS.check[String(name).toLowerCase()];
+      // Hook check không có (không có API đọc, hoặc dự án chưa viết): ghi "không kiểm được", case chạy tiếp — kiểm không đổi trạng thái app
+      if (typeof fn !== 'function') {
+        const why = UNVERIFIABLE_HOOKS.test(String(name)) ? NO_API : `chưa khai báo hook check "${name}" trong src/hooks.js — viết hook hoặc kiểm tay`;
+        logStep({ kind: 'Action', step, screen, keyword: 'Run check', target: name, value: '', ok: true, note: `Không kiểm tự động được (${why}): ${label || name}` });
+        noteUnverified({ step, screen, target: name, label, why });
+        return;
+      }
       const r = (await fn({ driver, vars, env })) || {};
       const want = r.expected ?? 'pass';
       await check(step, screen, 'Run check', name, '', label, null, r.pass ? want : (r.actual ?? 'fail'), want);
@@ -1088,5 +1433,5 @@ export function createSteps({ sa, logStep, snapshot, flowBug = () => {}, noteScr
     },
     // Đánh dấu bước đã làm bằng code riêng (Set ruler, Select date, alert hệ thống …) để Steps to Reproduce đủ bước
     log: act,
-  });
+  }));
 }

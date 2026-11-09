@@ -7,4 +7,6 @@ Mục tiêu: sau khi các luồng chính chạy xong, thử vài tình huống g
 3. Xoay màn hình: dùng "rotate" (text "landscape" rồi "portrait"). Nếu tool báo không xoay được thì app khóa hướng dọc theo thiết kế: BỎ QUA, không ghi lệch. Nếu xoay được: nội dung, giá trị đã nhập và vị trí cuộn phải còn, không bị cắt hay chồng lên nhau (nếu app không khóa hướng).
 4. Mỗi thử nghiệm xong, về lại trạng thái bình thường (portrait, app ở màn hình trước đó) rồi mới thử việc tiếp theo.
 
+Xoay sang ngang xong thì xoay lại dọc ("rotate" portrait) trước khi kết thúc (tool cũng tự đưa về dọc khi luồng xong).
+
 Cách kết luận: ghi "finding" kind "robust" cho từng điều thật sự lệch, nêu rõ làm gì và thấy gì (vd "Sau khi xuống nền 5 giây rồi mở lại, giá trị 96 đã nhập mất"). Giữ nguyên hết thì kết thúc "done" với flowStatus "ok". Không ghi lại điều đã ghi ở luồng trước. Không thử mất mạng, push, deep link: tool chưa hỗ trợ trên Simulator.

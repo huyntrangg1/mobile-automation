@@ -207,9 +207,14 @@ const WDA_LIB = 'PlugIns/WebDriverAgentRunner.xctest/Frameworks/WebDriverAgentLi
 const sha1 = async (f) => crypto.createHash('sha1').update(await fs.promises.readFile(f)).digest('hex');
 // Simulator vừa bật còn dở dang thì Appium khởi động lại dịch vụ SpringBoard / tccd và gặp "'/bin/launchctl' failed with exit code 3".
 // bootstatus -b: bật nếu đang tắt và CHỜ tới khi hệ thống sẵn sàng (đã bật xong thì trả về ngay).
-export async function ensureSimulatorReady(udid, { exec = run } = {}) {
+// Có giới hạn thời gian (mặc định 120s): simulator treo lúc bật thì không giữ run 'running' + khoá thiết bị mãi
+export async function ensureSimulatorReady(udid, { exec, timeoutMs = 120000 } = {}) {
   if (!/^[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}$/i.test(String(udid))) return false;
-  try { await exec('xcrun', ['simctl', 'bootstatus', udid, '-b']); return true; } catch { return false; }
+  const call = exec ? exec('xcrun', ['simctl', 'bootstatus', udid, '-b'])
+    : promisify(execFile)('xcrun', ['simctl', 'bootstatus', udid, '-b'], { timeout: timeoutMs, killSignal: 'SIGKILL' });
+  let timer;
+  const limit = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`simctl bootstatus quá ${Math.round(timeoutMs / 1000)}s`)), timeoutMs); });
+  try { await Promise.race([call, limit]); return true; } catch { return false; } finally { clearTimeout(timer); call.catch?.(() => {}); }
 }
 
 export async function wdaInstalled(udid, { exec = run, wdaDir = WDA_DIR } = {}) {
@@ -230,6 +235,16 @@ export function deviceScreenshot(udid, file, platform = 'iOS') {
         if (e) return reject(e);
         fs.writeFileSync(file, out);
         resolve();
+      });
+    });
+  }
+  // iPhone thật: simctl không chụp được → idevicescreenshot (libimobiledevice) nếu có; không có thì báo rõ, unsupported = đừng thử lại
+  if (isRealIos(udid)) {
+    return new Promise((resolve, reject) => {
+      execFile('idevicescreenshot', ['-u', udid, file], { timeout: 15000 }, (e) => {
+        if (!e) return resolve();
+        if (e.code === 'ENOENT') return reject(Object.assign(new Error('iPhone thật cần idevicescreenshot (brew install libimobiledevice) để chụp màn — test vẫn chạy bình thường'), { unsupported: true }));
+        reject(e);
       });
     });
   }

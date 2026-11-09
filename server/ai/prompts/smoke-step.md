@@ -36,8 +36,7 @@ Chọn MỘT thao tác trong "action":
 - "background": đưa app xuống nền rồi mở lại, "text" là số giây (1–30, mặc định 5). Chỉ dùng trong luồng "Kiểm bền vững".
 - "rotate": xoay màn hình, "text" là landscape hoặc portrait. Nếu tool báo không xoay được thì app khóa dọc: bỏ qua. Chỉ dùng trong luồng "Kiểm bền vững".
 - "openLink": mở deep link (chỉ khi HỒ SƠ APP ở trên có link), "text" là link đầy đủ. Dùng để vào thẳng màn con của luồng thay vì đi nhiều bước.
-- "push": gửi push giả lập tới app (chỉ iOS Simulator), "text" là "tiêu đề|nội dung". Chỉ dùng khi luồng đang kiểm thông báo; sau đó nhìn xem app xử lý ra sao (banner, mở màn đích).
-- "done": kết thúc luồng này. Khi dùng "done", PHẢI điền "flowStatus": ok (luồng chạy hết và khớp tài liệu) | deviation (có điểm lệch đã ghi) | unreachable (không tới được màn đầu của luồng) | unverifiable (không đủ căn cứ để kết luận). Điền "summary" một câu lý do. Không dùng "ok" khi bạn chưa thao tác gì trong luồng này: chưa làm gì thì chưa có căn cứ để nói khớp.
+{{pushAction}}- "done": kết thúc luồng này. Khi dùng "done", PHẢI điền "flowStatus": ok (luồng chạy hết và khớp tài liệu) | deviation (có điểm lệch đã ghi) | unreachable (không tới được màn đầu của luồng) | unverifiable (không đủ căn cứ để kết luận). Điền "summary" một câu lý do. Không dùng "ok" khi bạn chưa thao tác gì trong luồng này: chưa làm gì thì chưa có căn cứ để nói khớp.
 
 Điền "atFrame" (có thể kèm bất kỳ thao tác nào) khi bạn thấy màn hiện tại ĐÚNG là màn của một frame Figma trong danh sách ở trên: ghi tên frame đó. Nếu có file Figma .json, tool sẽ tự so màn với frame đó BẰNG CODE (vị trí, kích thước, màu nền, màu chữ, cỡ chữ, chữ thiếu) rồi ghi điểm lệch. Vì vậy bạn KHÔNG cần tự so màu / kích thước / vị trí bằng mắt; chỉ ghi "finding" cho lệch về luồng, nội dung và thiếu / thừa phần tử. Chỉ điền atFrame khi màn đã đứng yên và đúng là màn đó (mỗi frame chỉ cần điền một lần).
 

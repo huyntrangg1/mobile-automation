@@ -95,6 +95,16 @@ export async function exists(sel, timeout = 2000) {
   }
 }
 
+// Đang HIỆN trên màn (không chỉ có trong cây phần tử: màn cũ nằm ẩn phía sau màn mới vẫn có trong cây)
+export async function visible(sel, timeout = 2000) {
+  try {
+    await $(sel).waitForDisplayed({ timeout });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function isEnabled(sel) {
   return (await el(sel)).isEnabled();
 }

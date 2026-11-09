@@ -7,6 +7,8 @@ import * as ui from '../utils/ui.js';
 
 const fileOf = (cwd = process.cwd()) => path.join(cwd, 'data', 'nav-graph.json');
 const buildOf = () => process.env.BUILD_STAMP || '';
+// Nút mua / thanh toán / đăng nhập bên thứ ba: không ghi vào sơ đồ, không bao giờ bấm khi tự điều hướng
+const BUY = /\b(subscribe|buy|purchase|start (my |your )?(free )?trial|try (it )?free|get premium|upgrade|pay|continue with (apple|google|facebook)|sign in with)\b|[$€£₫¥]\s?\d/i;
 
 function read(cwd) {
   try { return JSON.parse(fs.readFileSync(fileOf(cwd), 'utf8')); } catch { return { edges: [] }; }
@@ -18,7 +20,9 @@ export function recordEdge(edge, { cwd } = {}) {
   try {
     if (!edge?.from || !edge.to || edge.from === edge.to || typeof edge.sel !== 'string' || !edge.arrive?.sel) return;
     if (edge.sel.startsWith('point:') || String(edge.arrive.sel).startsWith('point:')) return;
+    if (BUY.test(`${edge.target || ''} ${edge.sel}`)) return;
     const build = buildOf();
+    if (!build) return; // không biết build → không ghi (cạnh của build khác sẽ bị dùng nhầm)
     const g = read(cwd);
     const edges = g.edges.filter((e) => e.build === build && !(e.from === edge.from && e.to === edge.to));
     edges.push({ ...edge, build, at: new Date().toISOString() });
@@ -31,7 +35,8 @@ export function recordEdge(edge, { cwd } = {}) {
 export function findPath(from, to, { cwd } = {}) {
   if (from === to) return [];
   const build = buildOf();
-  const edges = read(cwd).edges.filter((e) => e.build === build && !e.needsInput);
+  if (!build) return null;
+  const edges = read(cwd).edges.filter((e) => e.build === build && !e.needsInput && !BUY.test(`${e.target || ''} ${e.sel}`));
   const prev = new Map([[from, null]]);
   const queue = [from];
   while (queue.length) {
@@ -50,9 +55,17 @@ export function findPath(from, to, { cwd } = {}) {
   return null;
 }
 
+// Dấu hiệu nhận màn `name` (ghi từ lần tới màn đó gần nhất, cùng build) → { sel, what } hoặc null
+export function screenMarker(name, { cwd } = {}) {
+  const build = buildOf();
+  const e = read(cwd).edges.filter((x) => x.build === build && x.to === name && x.arrive?.sel).at(-1);
+  return e ? e.arrive : null;
+}
+
 // Đi theo đường: bấm từng nút rồi chờ dấu hiệu của màn kế (cùng cách k.nav chờ màn)
 export async function walkPath(route, say = () => {}) {
   for (const e of route) {
+    if (BUY.test(`${e.target || ''} ${e.sel}`)) throw new Error(`Không tự bấm "${e.target}" (nút mua / thanh toán) khi điều hướng`);
     say(`Điều hướng: ${e.from} → bấm "${e.target}" → ${e.to}`);
     await ui.tap(e.sel);
     await ui.el(e.arrive.sel, 15000).catch(() => { throw new Error(`Không tới được màn ${e.to}: không thấy ${e.arrive.what || e.arrive.sel} sau 15s`); });

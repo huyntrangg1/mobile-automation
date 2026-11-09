@@ -1,4 +1,5 @@
-// Import test case manual: phân tích + lọc → chỉnh lựa chọn → chuyển đổi (nền) → import + gen. Chuyển đổi không dùng thiết bị.
+// Import test case manual: phân tích + lọc → chỉnh lựa chọn → chuyển đổi (nền) → import + gen. Chuyển đổi chỉ dùng thiết bị khi gửi
+// udid (chạy thử luồng chung trên thiết bị, giữ khoá thiết bị trong lúc chạy thử).
 import os from 'node:os';
 import { Router } from 'express';
 import multer from 'multer';
@@ -39,13 +40,24 @@ export default function manualRoutes({ store, converter }) {
   // AI điền sẵn gợi ý cho các điểm mờ chưa trả lời (đọc locator map); user chỉ duyệt / sửa
   r.post('/manual/:id/suggest', wrap(async (req, res) => {
     need(req.params.id);
-    res.json(view(await converter.suggest(req.params.id)));
+    res.json(view(await converter.suggest(req.params.id, { cases: req.body?.cases })));
+  }));
+  // Chọn cách xử lý một chỗ lệch giữa tài liệu và app: doc (theo tài liệu) / app (tài liệu đã cũ)
+  r.put('/manual/:id/spec', wrap(async (req, res) => {
+    const { sheet, tcId, step, manual, app, choice } = req.body || {};
+    need(req.params.id);
+    res.json(view(converter.specChoose(req.params.id, { sheet, tcId, step, manual, app, choice })));
   }));
   r.post('/manual/:id/convert', wrap(async (req, res) => {
     const mi = need(req.params.id);
     if (converter.busy(mi.id)) return res.status(409).json({ error: 'Đang xử lý file này — đợi xong rồi thử lại' });
-    converter.convert(mi.id, { gen: req.body?.gen !== false }).catch((e) => console.error('convert:', e.message)); // chạy nền, tiến độ qua SSE
+    converter.convert(mi.id, { gen: req.body?.gen !== false, fresh: req.body?.fresh === true, udid: typeof req.body?.udid === 'string' ? req.body.udid.trim() : '' }).catch((e) => console.error('convert:', e.message)); // chạy nền, tiến độ qua SSE
     res.status(202).json({ id: mi.id });
+  }));
+  r.post('/manual/:id/stop', wrap(async (req, res) => {
+    need(req.params.id);
+    converter.stop(req.params.id);
+    res.status(202).json({ id: req.params.id });
   }));
   r.post('/manual/:id/conflicts', wrap(async (req, res) => {
     const { sheet, tcId, action } = req.body || {};

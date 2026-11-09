@@ -20,7 +20,17 @@ export async function preflight({ app, udid, runCases, deps }) {
   if (!app.appPath || !deps.exists(app.appPath)) items.push(item('app', 'Thiết bị', 'File app', 'fail', app.appPath ? `Không thấy ${app.appPath}` : 'App chưa có file build', 'Cập nhật bản build ở Cài đặt app'));
   else items.push(item('app', 'Thiết bị', 'File app', 'ok'));
 
-  if (await deps.portBusy(4723).catch(() => false)) items.push(item('appium', 'Thiết bị', 'Cổng Appium 4723', 'warn', 'Đang có Appium khác chiếm cổng (thường do run trước chưa tắt hẳn) — wdio có thể không khởi động được', 'Đợi vài giây cho run trước dọn xong, hoặc tắt Appium cũ: lsof -ti :4723 | xargs kill'));
+  // Workspace thiếu wdio (chưa npm install / node_modules bị xoá) → wdio không chạy được
+  if (deps.wdioInstalled && app.workspace && !deps.wdioInstalled(app.workspace)) {
+    items.push(item('wdio', 'Thiết bị', 'WebdriverIO trong workspace', 'fail', `Không thấy ${app.workspace}/node_modules/@wdio`, `Cài lại thư viện: cd "${app.workspace}" && npm install`));
+  }
+  // Cổng Appium: wdio.conf.js của workspace tự bật Appium (service 'appium') ở cổng đó → cổng bận thì run chắc chắn lỗi = fail.
+  // Không biết cấu hình (deps cũ không có appiumPort) → chỉ cảnh báo như trước; workspace không tự bật Appium → không cần cổng
+  const port = deps.appiumPort ? deps.appiumPort(app.workspace) : undefined;
+  const checkPort = port === undefined ? 4723 : port;
+  if (checkPort && await deps.portBusy(checkPort).catch(() => false)) {
+    items.push(item('appium', 'Thiết bị', `Cổng Appium ${checkPort}`, port ? 'fail' : 'warn', `Đang có Appium khác chiếm cổng ${checkPort} (thường do run trước chưa tắt hẳn) — wdio ${port ? 'sẽ không' : 'có thể không'} khởi động được Appium`, `Đợi vài giây cho run trước dọn xong, hoặc tắt Appium cũ: lsof -ti :${checkPort} | xargs kill`));
+  }
 
   // ---- Script (dry-run: không chạy gì, chỉ kiểm mọi thứ khớp)
   const files = [...new Set(runCases.map((c) => c.file))];
@@ -53,10 +63,22 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { listDevices } from '../device/platforms.js';
 
+// Cổng Appium mà wdio.conf.js của workspace tự bật (service 'appium'): port trong args của service hoặc cấu hình, mặc định 4723.
+// null = workspace không tự bật Appium (nối vào Appium có sẵn) · undefined = không đọc được cấu hình
+export function appiumPortOf(workspace, read = (f) => fs.readFileSync(f, 'utf8')) {
+  let src;
+  try { src = read(path.join(workspace, 'wdio.conf.js')); } catch { return undefined; }
+  if (!/services\s*:[^\]]*['"]appium['"]/.test(src)) return null;
+  const m = src.match(/\bport\s*:\s*(\d{2,5})/);
+  return m ? Number(m[1]) : 4723;
+}
+
 export function realDeps({ specPath, build }) {
   return {
     listDevices, build, specPath,
     exists: (p) => fs.existsSync(p),
+    wdioInstalled: (workspace) => fs.existsSync(path.join(workspace, 'node_modules', '@wdio')),
+    appiumPort: (workspace) => appiumPortOf(workspace),
     portBusy: async (port) => {
       try { return (await fetch(`http://127.0.0.1:${port}/status`, { signal: AbortSignal.timeout(1500) })).ok; } catch { return false; }
     },

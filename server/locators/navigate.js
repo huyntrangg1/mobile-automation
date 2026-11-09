@@ -34,7 +34,8 @@ export function nextEdge(edges, from, to, bad = new Set()) {
 // Bỏ chữ có số / ngày tháng: là dữ liệu của thiết kế, app có thể đang ở trạng thái khác (không có dữ liệu) → AI không được đuổi theo
 const hintsOf = (s) => s.elements.filter((e) => e.name && !/\d/.test(e.name) && (e.type === 'StaticText' || e.type === 'Button')).slice(0, 12).map((e) => `${e.type} "${e.name}"`).join(', ') || '(không có)';
 
-// ctx: { target, edges:{list,add}, driver, app, snap, log, settle, doAction, dismissAlert, relaunch, runClaude, model, hints, screens, shouldStop }
+// ctx: { target, edges:{list,add}, driver, app, snap, log, settle, doAction, dismissAlert, relaunch, runClaude, model, hints, screens, shouldStop, signal }
+//   doAction luôn được gọi kèm { app, elements } → kiểm mua (app khác / tờ thanh toán: chỉ bấm đóng / huỷ)
 // → true nếu tới được màn đích
 export async function navigateTo(ctx) {
   const { target, edges, driver, app, snap, log, settle, doAction, dismissAlert, relaunch, runClaude, model, maxSteps = 25 } = ctx;
@@ -81,7 +82,7 @@ export async function navigateTo(ctx) {
     if (e && has(e.locator)) {
       const a = { action: e.action, locator: e.locator, text: e.text, reason: 'theo đường đã ghi' };
       tried.push(`${a.action} ${a.locator}`);
-      if (await doAction(driver, a, log, '(đường đã ghi) ')) pending = { from: screen.id, action: a };
+      if (await doAction(driver, a, log, '(đường đã ghi) ', { app, elements })) pending = { from: screen.id, action: a };
       else { bad.add(e.id); checkAlert = true; }
       await settle(driver, snap, { android: app?.platform === 'Android' });
       continue;
@@ -93,7 +94,8 @@ export async function navigateTo(ctx) {
       knownScreens: ctx.screens().map((s) => s.name).join(', '), tried: tried.slice(-8).join('; ') || 'chưa có',
       hints: Object.entries(ctx.hints || {}).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join(', ') || 'không có',
     });
-    const r = await runClaude({ prompt, schema: SCHEMA, timeoutMs: 120000, noTools: true, model });
+    const r = await runClaude({ prompt, schema: SCHEMA, timeoutMs: 120000, noTools: true, model, ...(ctx.signal ? { signal: ctx.signal } : {}) });
+    if (r.cancelled || ctx.shouldStop?.()) break;
     if (!r.ok) {
       log(`AI lỗi: ${r.error}`);
       if (++aiFails >= 3) throw new Error(`AI lỗi 3 lần liên tiếp: ${r.error}`);
@@ -107,7 +109,7 @@ export async function navigateTo(ctx) {
     if (a.action === 'tap' || a.action === 'type') {
       if (!has(a.locator)) { log(`Bỏ qua: AI chọn locator không có trên màn (${a.locator})`); continue; }
       tried.push(`${a.action} ${a.locator}`);
-      if (await doAction(driver, a, log)) pending = { from: screen.id, action: { action: a.action, locator: a.locator, text: a.text } };
+      if (await doAction(driver, a, log, '', { app, elements })) pending = { from: screen.id, action: { action: a.action, locator: a.locator, text: a.text } };
       else checkAlert = true;
     } else if (a.action === 'back') {
       const back = elements.find((x) => x.type === 'Button' && /^(Back|Close)$/i.test(x.name));

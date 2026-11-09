@@ -26,7 +26,7 @@ test('splitGroups: bỏ id lạ, id trùng giữ lần đầu, thêm id thiếu 
   assert.deepEqual(splitGroups(order, [['A', 'X', 'B'], ['B', 'C']]), [['A', 'B'], ['C', 'D']]);
 });
 
-test('buildSkeleton: case đầu sheet luôn fresh (ép bằng code); id thiếu / lạ được chỉnh; prompt không chứa steps/expected nhưng chứa mọi id', async () => {
+test('buildSkeleton: case đầu sheet luôn fresh (ép bằng code); id thiếu / lạ được chỉnh; prompt có Steps (để lập luồng đúng) nhưng không có Expected, chứa mọi id', async () => {
   const cases = ['A', 'B', 'C'].map(mc);
   const f = ai({ order: [{ id: 'A', fresh: false }, { id: 'ZZ', fresh: true }, { id: 'B', fresh: false }], groups: [['A', 'B']], flows: {} });
   const r = await buildSkeleton({ sheet: 'Welcome', cases, runClaude: f });
@@ -36,7 +36,7 @@ test('buildSkeleton: case đầu sheet luôn fresh (ép bằng code); id thiếu
   assert.equal(f.calls.length, 1);
   const sent = `${f.calls[0].system}\n${f.calls[0].prompt}`;
   for (const id of ['A', 'B', 'C']) assert.ok(sent.includes(id));
-  assert.ok(!sent.includes('BƯỚC-BÍ-MẬT') && !sent.includes('MONG-ĐỢI-BÍ-MẬT'));
+  assert.ok(sent.includes('BƯỚC-BÍ-MẬT') && !sent.includes('MONG-ĐỢI-BÍ-MẬT'));
   assert.match(f.calls[0].system, /fresh: true/); // quy tắc từ SKILL.md
 });
 

@@ -258,3 +258,4 @@ ul.actual,ul.expected,ul.where{padding-left:18px}
   .bug-body{grid-template-columns:1fr 210px}.row>summary{background:#fff!important;box-shadow:none!important}
   *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 }
+.rv-flag{display:inline-block;margin-left:6px;padding:0 6px;border-radius:var(--radius-sm);border:1px solid var(--blocked);background:var(--blocked-soft);color:var(--blocked-ink);font-size:11px;line-height:16px;font-weight:600;vertical-align:middle;white-space:nowrap}

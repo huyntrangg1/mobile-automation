@@ -5,7 +5,7 @@ import { PopMenu } from '../components/PopMenu.jsx';
 import { api } from '../api.js';
 import { useEvents } from '../useEvents.js';
 import { Empty, ErrorNote, PageHeader, fmtDur, fmtTime } from '../components/ui.jsx';
-import { loadManualFix } from '../manualFix.js';
+import { loadManualFix, loadAiAssist, loadRerunDevice } from '../manualFix.js';
 
 // Trạng thái run: [class badge, nhãn]. Run đang chạy mà tạm dừng tính là một trạng thái riêng.
 const STATE = { running: ['stt-run', 'Đang chạy'], paused: ['stt-pause', 'Tạm dừng'], done: ['stt-done', 'Xong'], stopped: ['stt-stop', 'Đã dừng'], error: ['stt-err', 'Lỗi'], interrupted: ['stt-err', 'Bị ngắt'] };
@@ -74,7 +74,7 @@ export function Runs({ lock }) {
   }, [shown]);
   const selectable = shown.filter((r) => r.status !== 'running');
   const allPicked = selectable.length > 0 && selectable.every((r) => pick[r.id]);
-  const rerun = (r) => api.post(`/runs/${r.id}/rerun`, { manualFix: loadManualFix() }).then((x) => nav(`/runs/${x.id}`)).catch(setErr);
+  const rerun = (r) => api.post(`/runs/${r.id}/rerun`, { manualFix: loadManualFix(), aiAssist: loadAiAssist() && !loadManualFix(), ...(loadRerunDevice(r.appId) ? { udid: loadRerunDevice(r.appId) } : {}) }).then((x) => nav(`/runs/${x.id}`)).catch(setErr);
 
   return (
     <main className="content">

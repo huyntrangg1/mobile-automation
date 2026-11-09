@@ -7,9 +7,10 @@ import { scrollToText, fingerprint } from './scroll.js';
 import { screenOverlap } from './screenMatch.js';
 import { runClaude as defaultRunClaude } from '../ai/claude.js';
 import { parseElements, isTransient, toPrompt } from '../locators/pageSource.js';
-import { settle, doAction, relaunchApp } from '../locators/explore.js';
+import { settle, doAction, relaunchApp, MAX_OVERLAY_CLOSES } from '../locators/explore.js';
 import { handleAlert } from './alerts.js';
-import { isBuyTarget, elementAtPoint } from './guard.js';
+import { isBuyTarget, purchaseCheck, storeContext, pointCheck } from './guard.js';
+import { isRealIos } from '../device/platforms.js';
 import { looksLikePaywall, closeOverlay, foreignForeground } from '../locators/overlay.js';
 import { swipe, tapPoint } from '../ui/device.js';
 import { planFlows } from './plan.js';
@@ -27,10 +28,11 @@ const PROMPT = read('smoke-step.md');
 const KNOWLEDGE = read('smoke-knowledge.md');
 const ROBUST_KNOWLEDGE = read('smoke-robust.md');
 const FULL_KNOWLEDGE = 'CHẾ ĐỘ KIỂM MỞ RỘNG: luồng này có thể là luồng sâu (validation, đổi đơn vị, ranh giới giá trị, bấm liên tục, empty state). Với luồng sâu được phép thử giá trị biên và thao tác lặp theo đúng "expected"; quy tắc "không đào sâu trường hợp biên" ở trên KHÔNG áp dụng. Mốc PRD ghi chưa rõ thì ghi kind unclear, không kết luận đúng sai.';
+const ACTIONS = ['tap', 'tapPoint', 'type', 'swipe', 'scrollTo', 'wait', 'back', 'relaunch', 'background', 'rotate', 'openLink', 'push', 'done'];
 const STEP_SCHEMA = {
   type: 'object',
   properties: {
-    action: { type: 'string', enum: ['tap', 'tapPoint', 'type', 'swipe', 'scrollTo', 'wait', 'back', 'relaunch', 'background', 'rotate', 'openLink', 'push', 'done'] },
+    action: { type: 'string', enum: ACTIONS },
     locator: { type: 'string' },
     x: { type: 'number' },
     y: { type: 'number' },
@@ -46,6 +48,15 @@ const STEP_SCHEMA = {
   },
   required: ['action'],
 };
+// Push giả lập chỉ chạy trên iOS Simulator (simctl push) → thiết bị khác không đưa "push" vào schema / prompt
+export const canPush = (app, udid) => app?.platform !== 'Android' && /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i.test(String(udid || ''));
+export function stepSchemaFor(push) {
+  if (push) return STEP_SCHEMA;
+  return { ...STEP_SCHEMA, properties: { ...STEP_SCHEMA.properties, action: { type: 'string', enum: ACTIONS.filter((a) => a !== 'push') } } };
+}
+const PUSH_LINE = '- "push": gửi push giả lập tới app (chỉ iOS Simulator), "text" là "tiêu đề|nội dung". Chỉ dùng khi luồng đang kiểm thông báo; sau đó nhìn xem app xử lý ra sao (banner, mở màn đích).\n';
+// Sau khi bấm nút mua trong app (mở tờ thanh toán): bấy nhiêu bước kế tiếp chỉ được đóng / huỷ — tờ StoreKit có thể không có trong cây phần tử
+const ARMED_STEPS = 3;
 const MODEL = process.env.QAPD_SMOKE_MODEL || process.env.QAPD_EXPLORE_MODEL || 'claude-sonnet-5-5';
 const fill = (tpl, v) => tpl.replace(/\{\{(\w+)\}\}/g, (_, k) => String(v[k] ?? ''));
 const clampPct = (n) => Math.min(100, Math.max(0, Number(n) || 0));
@@ -129,6 +140,9 @@ export function createSmoke({ store, lock, emit, dataDir, openImpl = openSession
       let driver = session.driver;
       if (reuse) log(id, 'Dùng lại app đã onboard từ lần chạy trước (không cài lại)');
       const android = app.platform === 'Android';
+      const push = canPush(app, udid);
+      const schema = stepSchemaFor(push);
+      let rotated = false; // đã xoay ngang → hết luồng đưa về dọc (luồng sau / lần chạy sau không bị kẹt ngang)
       const live = path.join(dir(id), 'live.png');
       const win = await driver.getWindowSize?.().catch(() => null);
       // Bản nhẹ: page source + ảnh + phần tử, không ghi vào locator map
@@ -180,7 +194,7 @@ export function createSmoke({ store, lock, emit, dataDir, openImpl = openSession
       };
 
       // Một luồng → { status, summary, steps }
-      const runFlow = async (f, { maxSteps = lim.maxSteps } = {}) => {
+      const runFlowSteps = async (f, { maxSteps = lim.maxSteps } = {}) => {
         const frames = f.frames.slice(0, 3).map((fr) => ({ ...fr, file: frameFiles.get(fr.nodeId) }));
         const figmaFrames = frames.filter((x) => x.file).map((x) => `${x.name} → ${x.file}`).join('; ') || 'không có ảnh Figma';
         const flowEnd = Math.min(deadline, Date.now() + lim.flowMs);
@@ -202,6 +216,8 @@ export function createSmoke({ store, lock, emit, dataDir, openImpl = openSession
         let rejects = 0; // số lần từ chối kết luận "không có" khi chưa cuộn
         let carry = ''; // lời nhắc đưa vào lần hỏi AI kế tiếp
         let acted = false; // đã có ít nhất một thao tác thành công (chống "đạt" khi chưa làm gì)
+        let foreignCloses = 0; // màn trống vì app khác che: số lần đã thử đóng liên tiếp
+        let armed = 0; // > 0: vừa bấm nút mua trong app → tờ thanh toán có thể đang hiện → chỉ đóng / huỷ
         let step = 0;
         const end = (status, summary) => ({ status, summary, steps: step });
         for (step = 1; step <= maxSteps; step++) {
@@ -214,6 +230,12 @@ export function createSmoke({ store, lock, emit, dataDir, openImpl = openSession
           const s = await snap(driver);
           if (!s.usable) {
             if (loading >= 2 && await foreignForeground(driver, app)) {
+              // App khác / tờ thanh toán cứ hiện lại: tối đa MAX_OVERLAY_CLOSES lần đóng, rồi mở lại app, quá nữa thì kết thúc luồng
+              if (++foreignCloses > MAX_OVERLAY_CLOSES) {
+                if (foreignCloses > MAX_OVERLAY_CLOSES * 2) return end(deviations ? 'deviation' : 'unverifiable', 'App khác / tờ thanh toán cứ che màn — không đóng được');
+                log(id, 'Đóng màn che ngoài app nhiều lần vẫn kẹt → mở lại app');
+                await relaunchApp(driver, app); loading = 0; step--; await driver.pause(1500); continue;
+              }
               const how = await closeOverlay(driver, [], { app, win });
               if (how) { log(id, `Đóng màn che ngoài app: ${how}`); loading = 0; step--; await driver.pause(1000); continue; }
             }
@@ -223,6 +245,7 @@ export function createSmoke({ store, lock, emit, dataDir, openImpl = openSession
             continue;
           }
           loading = 0;
+          foreignCloses = 0;
           // Paywall / IAP: tool KHÔNG mua, chỉ đóng. Tự đóng tối đa 2 lần; còn kẹt (vd nút X vẽ bằng ảnh) thì giao cho AI nhìn ảnh rồi bấm theo toạ độ
           const paywall = looksLikePaywall(s.elements);
           if (!paywall) paywalls = 0;
@@ -231,7 +254,10 @@ export function createSmoke({ store, lock, emit, dataDir, openImpl = openSession
             const how = await closeOverlay(driver, s.elements, { app, win, tried: overlayTried });
             if (how) { log(id, `Màn paywall / IAP — đã đóng: ${how}`); await settle(driver, snap, { android, ...settleOpts }); continue; }
           }
-          const notice = [paywall ? 'Màn này trông như paywall / mua hàng và tự đóng chưa được. Hãy đóng nó (không mua): xem ảnh màn hình để tìm nút X / Close / Skip; nếu nút không có trong danh sách phần tử thì dùng "tapPoint" bấm theo toạ độ % trên ảnh.' : '', carry].filter(Boolean).join('\n');
+          const storeNow = storeContext(s.elements, await foreignForeground(driver, app).catch(() => null));
+          if (armed > 0) armed--;
+          const strict = storeNow.store || armed > 0;
+          const notice = [strict ? 'Tờ thanh toán của store / app khác có thể đang hiện: TUYỆT ĐỐI không xác nhận mua (Subscribe / Buy / Confirm / Pay / 1-tap…). Chỉ bấm Cancel / Close / X, "back" hoặc vuốt xuống để đóng; tool sẽ từ chối mọi thao tác khác.' : '', paywall ? 'Màn này trông như paywall / mua hàng và tự đóng chưa được. Hãy đóng nó (không mua): xem ảnh màn hình để tìm nút X / Close / Skip; nếu nút không có trong danh sách phần tử thì dùng "tapPoint" bấm theo toạ độ % trên ảnh.' : '', carry].filter(Boolean).join('\n');
           carry = '';
           // Ảnh tốn token: bước chuẩn bị ở màn thường chỉ dùng danh sách phần tử; cần ảnh khi có paywall, màn ít phần tử, hoặc thao tác trước thất bại
           const needImage = f.id !== PREPARE.id || !!notice || s.elements.length < 4 || !lastOk;
@@ -242,11 +268,11 @@ export function createSmoke({ store, lock, emit, dataDir, openImpl = openSession
             platform: app.platform || 'iOS', appName: app.name, flowName: f.name, goal: f.goal, prdQuote: f.prdQuote || '(không có PRD)',
             expected: f.expected.map((x) => `- ${x}`).join('\n'), unclear: f.unclear.length ? f.unclear.map((x) => `- ${x}`).join('\n') : 'không có',
             appShot: needImage ? live : '(bước này không dùng ảnh: dựa vào danh sách phần tử)', figmaFrames: needImage ? figmaFrames : 'không dùng ảnh ở bước này', known, elements: toPrompt(s.elements), tried: tried.join('; ') || 'chưa có', account: account || 'không có',
-            step, maxSteps, knowledge: (f.id === ROBUST.id ? `${KNOWLEDGE}\n\n${ROBUST_KNOWLEDGE}` : KNOWLEDGE) + (depth === 'full' && f.id !== ROBUST.id && f.id !== PREPARE.id ? `\n\n${FULL_KNOWLEDGE}` : '') + profileText, notice,
+            step, maxSteps, pushAction: push ? PUSH_LINE : '', knowledge: (f.id === ROBUST.id ? `${KNOWLEDGE}\n\n${ROBUST_KNOWLEDGE}` : KNOWLEDGE) + (depth === 'full' && f.id !== ROBUST.id && f.id !== PREPARE.id ? `\n\n${FULL_KNOWLEDGE}` : '') + profileText, notice,
           });
           const r = needImage
-            ? await runClaude({ prompt, schema: STEP_SCHEMA, allowedTools: ['Read'], lean: true, timeoutMs: 180000, model, onUsage, signal, ...persist })
-            : await runClaude({ prompt, schema: STEP_SCHEMA, noTools: true, timeoutMs: 180000, model, onUsage, signal, ...persist });
+            ? await runClaude({ prompt, schema, allowedTools: ['Read'], lean: true, timeoutMs: 180000, model, onUsage, signal, ...persist })
+            : await runClaude({ prompt, schema, noTools: true, timeoutMs: 180000, model, onUsage, signal, ...persist });
           if (!r.ok) {
             log(id, `AI lỗi: ${r.error}`);
             if (++aiFails >= 3) return end(deviations ? 'deviation' : 'unverifiable', `AI lỗi 3 lần liên tiếp: ${r.error}`);
@@ -289,27 +315,33 @@ export function createSmoke({ store, lock, emit, dataDir, openImpl = openSession
           }
           tried.push(key);
           let ok = true;
+          let chk = null;
           let scrollRes = null;
           if (a.action === 'tap' || a.action === 'type') {
             const target = a.locator && s.elements.find((e) => e.locator === a.locator || e.alts.includes(a.locator));
             if (!a.locator || !has(a.locator)) { log(id, `Bỏ qua: AI chọn locator không có trên màn (${a.locator})`); ok = false; }
-            else if (target && isBuyTarget(target, paywall)) { log(id, `Chặn: không bấm nút mua / đăng ký / dùng thử "${target.name || target.label}"`); ok = false; }
+            else if (!(chk = purchaseCheck(target, { store: strict })).ok) { log(id, `Chặn: ${chk.why}`); ok = false; }
             else {
+              // Nút mua trong app (paywall): được bấm để mở tờ thanh toán — sau đó chỉ được đóng / huỷ
+              if (a.action === 'tap' && target && isBuyTarget(target, paywall)) { armed = ARMED_STEPS + 1; log(id, `Bấm nút mua trong app "${target.name || target.label}" (chỉ mở tờ thanh toán — không xác nhận mua)`); }
               ok = await doAction(driver, a, (t) => log(id, t));
               if (ok && a.action === 'type') { try { await driver.hideKeyboard?.(); } catch { /* không có bàn phím để ẩn */ } } // như skill: ẩn bàn phím để không che phần tử kế tiếp
             }
           } else if (a.action === 'tapPoint') {
-            const hit = elementAtPoint(s.elements, win, clampPct(a.x), clampPct(a.y));
-            if (hit && isBuyTarget(hit, paywall)) { log(id, `Chặn: điểm chạm rơi vào nút mua / đăng ký / dùng thử "${hit.name || hit.label}"`); ok = false; }
-            else try { await tapPoint(driver, clampPct(a.x), clampPct(a.y)); log(id, `Chạm điểm ${Math.round(clampPct(a.x))}%, ${Math.round(clampPct(a.y))}%`); } catch (e) { log(id, `Không chạm được điểm: ${String(e.message).split('\n')[0]}`); ok = false; }
+            const pc = pointCheck(s.elements, win, clampPct(a.x), clampPct(a.y), { paywall, store: strict });
+            if (!pc.ok) { log(id, `Chặn: ${pc.why}`); ok = false; }
+            else try {
+              if (pc.hit && isBuyTarget(pc.hit, paywall)) armed = ARMED_STEPS + 1; await tapPoint(driver, clampPct(a.x), clampPct(a.y)); log(id, `Chạm điểm ${Math.round(clampPct(a.x))}%, ${Math.round(clampPct(a.y))}%`); } catch (e) { log(id, `Không chạm được điểm: ${String(e.message).split('\n')[0]}`); ok = false; }
           } else if (a.action === 'background') {
             try { const sec = await backgroundApp(driver, app, a.text); log(id, `Đưa app xuống nền ${sec} giây rồi mở lại`); } catch (e) { log(id, `Không đưa app xuống nền được: ${String(e.message).split('\n')[0]}`); ok = false; }
           } else if (a.action === 'openLink') {
             try { const u = await openDeepLink(driver, app, a.text); log(id, `Mở deep link ${u}`); } catch (e) { log(id, `Không mở được deep link: ${String(e.message).split('\n')[0]}`); ok = false; }
+          } else if (a.action === 'push' && !push) {
+            log(id, 'Bỏ qua push: push giả lập chỉ chạy trên iOS Simulator'); ok = false;
           } else if (a.action === 'push') {
             try { const [title, ...rest] = String(a.text || '').split('|'); const body = rest.join('|') || (rest.length ? '' : title); await pushImpl({ udid, app, title: rest.length ? title : '', body }); log(id, `Gửi push giả lập: ${a.text}`); await driver.pause(3000); } catch (e) { log(id, `Không gửi được push: ${String(e.message).split('\n')[0]}`); ok = false; }
           } else if (a.action === 'rotate') {
-            try { const o = await rotateDevice(driver, a.text); log(id, `Xoay màn hình: ${o}`); } catch (e) { log(id, `Không xoay được (app có thể khóa hướng dọc): ${String(e.message).split('\n')[0]}`); ok = false; }
+            try { const o = await rotateDevice(driver, a.text); rotated = o !== 'PORTRAIT'; log(id, `Xoay màn hình: ${o}`); } catch (e) { log(id, `Không xoay được (app có thể khóa hướng dọc): ${String(e.message).split('\n')[0]}`); ok = false; }
           } else if (a.action === 'scrollTo') {
             // Cuộn tới phần tử bằng code: vuốt từng lần, dừng khi thấy chữ đó hoặc hết màn (AI hay vuốt một lần rồi kết luận "không có")
             const label = String(a.text || '').trim();
@@ -349,12 +381,23 @@ export function createSmoke({ store, lock, emit, dataDir, openImpl = openSession
         step = maxSteps;
         return end(deviations ? 'deviation' : 'unverifiable', `Vượt giới hạn số bước (${maxSteps})`);
       };
+      // Luồng có xoay ngang (kiểm bền vững) → luôn đưa về dọc khi xong, kể cả khi luồng lỗi / dừng
+      const runFlow = async (...a) => {
+        try { return await runFlowSteps(...a); } finally {
+          if (rotated) {
+            rotated = false;
+            try { await driver.setOrientation('PORTRAIT'); log(id, 'Đưa màn hình về dọc (PORTRAIT)'); } catch (e) { log(id, `Không đưa màn hình về dọc được: ${String(e.message).split('\n')[0]}`); }
+          }
+        }
+      };
 
       // Chuẩn bị: AI tự đưa app tới màn chính. Không tới được → dừng với lý do rõ (chạy luồng khi app đang kẹt chỉ ra toàn "không kiểm được")
       log(id, reuse ? 'Chuẩn bị: mở lại app, về màn chính…' : 'Chuẩn bị: đưa app tới màn chính (onboarding, quyền, paywall)…');
       if (reuse) await relaunchApp(driver, app); // khởi động nguội để về đúng màn gốc
       let prep = await runFlow(PREPARE, { maxSteps: lim.prepSteps });
-      if (prep.status !== 'ok' && reuse && !job.stop) {
+      // Máy iPhone thật: "cài sạch" không cài lại được app (cài bằng Xcode / TestFlight) → thử lại vô ích, bỏ qua
+      if (prep.status !== 'ok' && reuse && !job.stop && app.platform !== 'Android' && isRealIos(udid)) log(id, 'iPhone thật: không cài sạch lại được nên không thử chuẩn bị lại — xoá app / dữ liệu bằng tay rồi chạy lại');
+      else if (prep.status !== 'ok' && reuse && !job.stop) {
         // Trạng thái cũ hỏng (không tới được màn chính) → cài sạch và chuẩn bị lại MỘT lần, không bắt người dùng làm tay
         log(id, `Dùng lại app không tới được màn chính (${prep.summary || prep.status}) → cài sạch và chuẩn bị lại`);
         store.remove('smokeState', stateKey);
@@ -430,15 +473,21 @@ export function createSmoke({ store, lock, emit, dataDir, openImpl = openSession
     const got = lock.acquire({ kind: 'smoke', id, label: `AI Smoke Test · ${app.name}` });
     if (!got.ok) throw bad(409, `Thiết bị đang bận: ${got.holder.label}`);
     emit('lock', lock.current());
-    await lock.ready?.();
-    store.put('meta', { id: 'smokeSeq', value: seq() + 1 });
-    // Không lưu tài khoản test (có thể là mật khẩu) vào store — chỉ giữ trong bộ nhớ cho lần chạy này
-    const rec = { id, appId, udid, depth: depth === 'full' ? 'full' : 'smoke', prdUrl, figmaUrl: exp ? '' : figmaUrl, figmaSource: exp ? 'json' : hasFig ? 'link' : 'none', figmaFileName: exp ? String(figmaName || '') : '', robust: robust !== false, notes, hasAccount: !!account, status: 'running', startedAt: new Date().toISOString(), log: [], flows: [], findings: [] };
-    store.put('smoke', rec);
-    const job = { stop: false, ctl: new AbortController() };
-    jobs.set(id, job);
-    run(id, app, udid, job, { prdUrl, figmaUrl: exp ? '' : figmaUrl, notes, account, exp, robust: robust !== false, clean: !!clean, depth: depth === 'full' ? 'full' : 'smoke' });
-    return rec;
+    try {
+      await lock.ready?.();
+      store.put('meta', { id: 'smokeSeq', value: seq() + 1 });
+      // Không lưu tài khoản test (có thể là mật khẩu) vào store — chỉ giữ trong bộ nhớ cho lần chạy này
+      const rec = { id, appId, udid, depth: depth === 'full' ? 'full' : 'smoke', prdUrl, figmaUrl: exp ? '' : figmaUrl, figmaSource: exp ? 'json' : hasFig ? 'link' : 'none', figmaFileName: exp ? String(figmaName || '') : '', robust: robust !== false, notes, hasAccount: !!account, status: 'running', startedAt: new Date().toISOString(), log: [], flows: [], findings: [] };
+      store.put('smoke', rec);
+      const job = { stop: false, ctl: new AbortController() };
+      jobs.set(id, job);
+      run(id, app, udid, job, { prdUrl, figmaUrl: exp ? '' : figmaUrl, notes, account, exp, robust: robust !== false, clean: !!clean, depth: depth === 'full' ? 'full' : 'smoke' });
+      return rec;
+    } catch (e) {
+      // Lỗi trước khi chạy (đọc / ghi store…) → nhả thiết bị, không khoá mãi
+      if (!jobs.has(id)) { lock.release(id); emit('lock', lock.current()); }
+      throw e;
+    }
   }
 
   async function stop(id) {
@@ -446,7 +495,9 @@ export function createSmoke({ store, lock, emit, dataDir, openImpl = openSession
     if (!j) return;
     j.stop = true;
     j.ctl.abort();
-    while (jobs.has(id)) await new Promise((r) => setTimeout(r, 20));
+    // Chờ lần chạy dọn xong (đóng phiên, nhả thiết bị) — tối đa stopWaitMs, không treo request Dừng mãi
+    const until = Date.now() + (limits.stopWaitMs ?? 30000);
+    while (jobs.has(id) && Date.now() < until) await new Promise((r) => setTimeout(r, 20));
   }
 
   // Server khởi động lại giữa lúc đang chạy → run mồ côi: đánh dấu bị ngắt, luồng đang chạy về "chưa chạy"

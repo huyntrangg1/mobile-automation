@@ -51,11 +51,21 @@ test('k.tap: locator không thấy → khớp chữ trên màn → bấm, lưu o
   assert.deepEqual(taps, [EMAIL, EMAIL]);
 });
 
-test('k.tap: mô tả mơ hồ → hỏi AI qua server; AI không chọn → lỗi như cũ (Blocked)', async () => {
+test('k.tap: không bật AI hỗ trợ → không hỏi AI chọn phần tử (chỉ khớp chữ)', async () => {
+  device(new Set([EMAIL]));
+  let called = 0;
+  globalThis.fetch = async () => { called++; return { ok: true, json: async () => ({ locator: EMAIL }) }; };
+  const k = createSteps({ sa: { eq() {} }, logStep() {}, snapshot: async () => ({}), env: { QAPD_API: 'http://x/api', APP_ID: 'tastory' }, cwd: tmpDir() });
+  await assert.rejects(k.tap(1, 'Welcome', 'Nút gửi mail để đăng nhập', '~sai'), /Không thấy/);
+  assert.equal(called, 0);
+  delete globalThis.fetch;
+});
+
+test('k.tap (bật AI hỗ trợ): mô tả mơ hồ → hỏi AI qua server; AI không chọn → lỗi như cũ (Blocked)', async () => {
   device(new Set([EMAIL]));
   const calls = [];
-  globalThis.fetch = async (url, o) => { calls.push([url, JSON.parse(o.body)]); return { ok: true, json: async () => ({ locator: calls.length === 1 ? EMAIL : null }) }; };
-  const env = { QAPD_API: 'http://x/api', APP_ID: 'tastory' };
+  globalThis.fetch = async (url, o) => { calls.push([url, JSON.parse(o.body)]); return { ok: true, json: async () => (url.endsWith('/resolve') ? { locator: calls.length === 1 ? EMAIL : null } : { action: 'giveUp', reason: 'không có' }) }; };
+  const env = { QAPD_API: 'http://x/api', APP_ID: 'tastory', AI_ASSIST: '1', EARLY_STUCK: '0' };
   const k = createSteps({ sa: { eq() {} }, logStep() {}, snapshot: async () => ({}), env, cwd: tmpDir() });
   await k.tap(1, 'Welcome', 'Nút gửi mail để đăng nhập', '~sai');
   assert.equal(calls[0][0], 'http://x/api/apps/tastory/resolve');

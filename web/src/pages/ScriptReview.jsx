@@ -4,6 +4,7 @@ import CodeMirror from '@uiw/react-codemirror';
 import { javascript } from '@codemirror/lang-javascript';
 import { EditorView } from '@codemirror/view';
 import { api } from '../api.js';
+import { genScripts } from '../genScripts.js';
 import { useEvents } from '../useEvents.js';
 import { Icon } from '../components/Icon.jsx';
 import { Empty, ErrorNote, PageHeader } from '../components/ui.jsx';
@@ -92,7 +93,7 @@ function ScriptList({ app }) {
     const min = Math.ceil((todo.length / 3) * 1.5);
     if (!window.confirm(`Gen script cho ${todo.length} case chưa có script trong ${cur}.xlsx (gồm cả case gen lỗi / cần gen lại)?\nAI chạy 3 case cùng lúc, ước tính khoảng ${min} phút. Bạn vẫn dùng tool bình thường trong lúc chờ.`)) return;
     setErr(null);
-    try { await api.post(`/apps/${appId}/scripts/generate`, { caseIds: todo.map((c) => c.id) }); setMsg(`Đang gen script cho ${todo.length} case — trạng thái cập nhật trực tiếp trong bảng.`); } catch (e) { setErr(e); }
+    try { await genScripts(appId, todo.map((c) => c.id)); setMsg(`Đang gen script cho ${todo.length} case — trạng thái cập nhật trực tiếp trong bảng.`); } catch (e) { setErr(e); }
   };
   const toSimutil = async () => {
     setErr(null);
@@ -275,7 +276,7 @@ function ScriptDetail({ app }) {
     setErr(null);
     try { await api.put(`/apps/${appId}/scripts/${file}`, { code, hash: doc.hash }); setMsg('Đã lưu'); setTimeout(() => setMsg(null), 2000); load(); } catch (e) { setErr(e); if (e.status === 409) setChanged(true); }
   };
-  const regen = () => api.post(`/apps/${appId}/scripts/generate`, { caseIds: [cur.id] }).catch(setErr);
+  const regen = () => genScripts(appId, [cur.id]).catch(setErr);
   const reviewed = () => api.post(`/cases/${encodeURIComponent(cur.id)}/reviewed`, { reviewed: !cur.script.reviewed }).then(load).catch(setErr);
   const exts = useMemo(() => [javascript(), EditorView.lineWrapping], []);
   const LFILT = [

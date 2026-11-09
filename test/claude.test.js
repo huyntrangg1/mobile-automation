@@ -144,3 +144,38 @@ test('noPersist: thêm --no-session-persistence (không lưu transcript, vd có 
   await runClaude({ prompt: 'p', schema, spawnImpl: b.impl });
   assert.ok(!b.calls[0].args.includes('--no-session-persistence'));
 });
+
+test('signal dùng chung nhiều lần gọi: gỡ listener abort khi xong (không rò)', async () => {
+  const ctl = new AbortController();
+  let added = 0;
+  let removed = 0;
+  const sig = ctl.signal;
+  const add = sig.addEventListener.bind(sig);
+  const rem = sig.removeEventListener.bind(sig);
+  sig.addEventListener = (...a) => { added++; return add(...a); };
+  sig.removeEventListener = (...a) => { removed++; return rem(...a); };
+  for (let i = 0; i < 3; i++) {
+    const { impl } = fakeSpawn({ stdout: JSON.stringify({ type: 'result', structured_output: { x: i } }) });
+    await runClaude({ prompt: 'p', schema, spawnImpl: impl, signal: sig });
+  }
+  assert.equal(added, 3);
+  assert.equal(removed, 3);
+});
+
+test('dừng mà claude không thoát sau SIGTERM → SIGKILL sau thời gian chờ', async () => {
+  const sigs = [];
+  const { EventEmitter: EE } = await import('node:events');
+  const impl = () => {
+    const p = new EE();
+    p.stdout = new EE(); p.stderr = new EE();
+    p.stdin = { write: () => {}, end: () => {} };
+    p.kill = (s) => { sigs.push(s); if (s === 'SIGKILL') setImmediate(() => p.emit('close', null, 'SIGKILL')); };
+    return p;
+  };
+  const ctl = new AbortController();
+  const r = runClaude({ prompt: 'p', schema, spawnImpl: impl, signal: ctl.signal, killGraceMs: 20 });
+  ctl.abort();
+  assert.equal((await r).cancelled, true);
+  await new Promise((res) => setTimeout(res, 60));
+  assert.deepEqual(sigs, ['SIGTERM', 'SIGKILL']);
+});

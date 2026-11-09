@@ -11,6 +11,7 @@
 | Tap | `await k.tap(step, screen, target, sel?)` |
 | Double tap / Long press | `await k.doubleTap(step, screen, target, sel?)` / `await k.longPress(step, screen, target, sel?, value?)` — value = số giây giữ |
 | Tap outside | `await k.tapOutside(step, screen, target, selCủaSheet?)` |
+| Close popup | `await k.closePopup(step, screen, target, sel?, value?)` — popup / tờ trong app CÓ THỂ hiện (mời đăng nhập, đánh giá…): hiện thì bấm nút đóng `target`, không hiện trong value giây (mặc định 3) thì bỏ qua, không lỗi |
 | Toggle | `await k.toggle(step, screen, target, sel, value)` — value on / off |
 | Deselect all | `await k.deselectAll(step, screen, target, selKhớpCácMục)` |
 | Enter / Clear | `await k.enter(step, screen, target, fill(value), sel)` / `await k.clear(step, screen, target, sel)` |

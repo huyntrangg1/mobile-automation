@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { looksLikePaywall, closeOverlay, tapAway, foreignForeground, isCloseName, BUY } from './overlay.js';
 import { swipe, tapPoint } from '../ui/device.js';
-import { isBuyTarget, elementAtPoint } from '../smoke/guard.js';
+import { isBuyTarget, elementAtPoint, purchaseCheck, storeContext, pointCheck } from '../smoke/guard.js';
 
 const PROMPT = fs.readFileSync(fileURLToPath(new URL('../ai/prompts/explore-step.md', import.meta.url)), 'utf8');
 const PAYWALL_PROMPT = fs.readFileSync(fileURLToPath(new URL('../ai/prompts/explore-paywall.md', import.meta.url)), 'utf8');
@@ -69,8 +69,31 @@ export async function dismissAlert(driver, platform) {
 
 // Sau mỗi thao tác: theo dõi nhanh tới khi màn đứng yên (quiet ms) hoặc hết maxMs, ghi mọi màn trung gian đứng yên ≥ 1 vòng
 // (vd "Importing…" chỉ hiện 1–2 giây — AI nghĩ ~8s mỗi bước nên chụp đầu bước sau là lỡ). iOS đọc nhanh bỏ visible (~180ms)
-// Bấm / nhập theo locator; false nếu không làm được (vd phần tử biến mất, popup che)
-export async function doAction(driver, a, log, prefix = '') {
+// Giới hạn khám phá (người dùng / API gửi số lớn → giữ thiết bị hàng giờ)
+export const EXPLORE_LIMITS = { maxSteps: 150, maxMinutes: 60 };
+export function clampExplore({ maxSteps, maxMinutes } = {}) {
+  const c = (v, def, max) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n > 0 ? Math.min(max, n) : def; };
+  return { maxSteps: c(maxSteps, 60, EXPLORE_LIMITS.maxSteps), maxMinutes: c(maxMinutes, 20, EXPLORE_LIMITS.maxMinutes) };
+}
+// Đóng màn che (paywall / app khác) tối đa bấy nhiêu lần cho một màn rồi mở lại app — không giữ thiết bị tới hết giờ
+export const MAX_OVERLAY_CLOSES = 3;
+
+// Kiểm mua trước khi tool bấm / nhập (dùng chung explore, đi tới màn, smoke): app khác / tờ thanh toán đang ở trên cùng
+// → chỉ được bấm nút đóng / huỷ. Nút mua TRONG app (paywall) vẫn bấm được (mở tờ thanh toán), không bao giờ xác nhận.
+export async function buyGuard(driver, a, { app, elements = [] } = {}) {
+  const foreign = app ? await foreignForeground(driver, app).catch(() => null) : null;
+  const ctx = storeContext(elements, foreign);
+  const el = elements.find((e) => e.locator === a.locator || e.alts?.includes(a.locator)) || null;
+  return purchaseCheck(el, ctx);
+}
+
+// Bấm / nhập theo locator; false nếu không làm được (vd phần tử biến mất, popup che) hoặc bị chặn mua.
+// guard = { app, elements }: bật kiểm mua (mọi thao tác do tool / AI tự chọn phải truyền)
+export async function doAction(driver, a, log, prefix = '', guard = null) {
+  if (guard) {
+    const chk = await buyGuard(driver, a, guard);
+    if (!chk.ok) { log(`Chặn: ${chk.why}`); return false; }
+  }
   try {
     const el = await driver.$(a.locator);
     if (a.action === 'tap') await el.click();
@@ -107,10 +130,15 @@ export async function relaunchApp(driver, app) {
   await driver.execute(app?.platform === 'Android' ? 'mobile: activateApp' : 'mobile: launchApp', arg).catch(() => {});
 }
 
-export async function exploreLoop(id, appId, driver, job, opts, { runClaude = defaultRunClaude, settleOpts = {}, model = EXPLORE_MODEL } = {}) {
+export async function exploreLoop(id, appId, driver, job, opts, { runClaude: rawClaude = defaultRunClaude, settleOpts = {}, model = EXPLORE_MODEL } = {}) {
   const { snap, log, update, renameScreen, screens, app } = opts;
-  const maxSteps = Number(opts.maxSteps) || 60;
-  const deadline = Date.now() + (Number(opts.maxMinutes) || 20) * 60000;
+  const { maxSteps, maxMinutes } = clampExplore(opts);
+  const deadline = Date.now() + maxMinutes * 60000;
+  // Bấm Dừng → huỷ ngay lần gọi AI đang chạy (job.ctl do record.js tạo; không có thì tự tạo, dừng theo job.stop)
+  const signal = job.ctl?.signal;
+  const runClaude = (o) => rawClaude({ ...o, ...(signal ? { signal } : {}) });
+  const guard = (elements) => ({ app, elements });
+  let foreignCloses = 0; // màn trống vì app khác che: số lần đã thử đóng liên tiếp
   const tried = new Map(); // screen id → thao tác đã thử
   const hints = Object.entries(opts.hints || {}).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join(', ') || 'không có';
   let aiFails = 0;
@@ -121,6 +149,7 @@ export async function exploreLoop(id, appId, driver, job, opts, { runClaude = de
   let lastScreenId = null;
   const overlayTried = new Map(); // screen id → locator đã bấm để đóng paywall (không bấm lặp)
   const overlayCloses = new Map(); // screen id → số lần đã đóng; quá 3 mà vẫn kẹt → mở lại app
+  const overlayRelaunches = new Map(); // screen id → số lần đã mở lại app vì kẹt màn che
   let win = null;
   const paywallWaited = new Set();
   const paywallAi = new Map(); // screen id → thao tác AI đã tự mò ở paywall
@@ -135,12 +164,12 @@ export async function exploreLoop(id, appId, driver, job, opts, { runClaude = de
     win = await driver.getWindowSize?.().catch(() => null);
     const ok = await navigateTo({
       target, edges, driver, app, snap, log, runClaude, model, hints: opts.hints, screens, win,
-      settle, doAction, dismissAlert, relaunch: relaunchApp, shouldStop: () => job.stop,
+      settle, doAction, dismissAlert, relaunch: relaunchApp, shouldStop: () => job.stop, signal,
     });
     if (!ok && !job.stop) throw new Error(`Không đi tới được màn "${target.name}" — đưa app tới màn đó rồi chọn "Từ màn app đang mở"`);
   }
   for (let step = 1; step <= maxSteps && !job.stop; step++) {
-    if (Date.now() > deadline) { log(`Hết thời gian (${opts.maxMinutes || 20} phút).`); break; }
+    if (Date.now() > deadline) { log(`Hết thời gian (${maxMinutes} phút).`); break; }
     if (checkAlert) {
       const closed = await dismissAlert(driver, app?.platform);
       if (closed) log(`Đóng popup hệ thống: ${closed}`);
@@ -154,6 +183,12 @@ export async function exploreLoop(id, appId, driver, job, opts, { runClaude = de
       // App đang tải: chờ, không tính bước (tối đa 10 lần liền)
       // Trống vì app khác (tờ thanh toán store, quảng cáo ngoài app) đang che → đóng / kéo app về lại
       if (loading >= 2 && await foreignForeground(driver, app)) {
+        // Đóng mãi không được (store / app khác cứ hiện lại) → mở lại app, quá nữa thì dừng — không giữ thiết bị tới hết giờ
+        if (++foreignCloses > MAX_OVERLAY_CLOSES) {
+          if (foreignCloses > MAX_OVERLAY_CLOSES * 2) throw new Error('App khác / tờ thanh toán cứ che màn — dừng khám phá');
+          log('Đóng màn che ngoài app nhiều lần vẫn kẹt → mở lại app');
+          await relaunchApp(driver, app); loading = 0; step--; await driver.pause(1500); continue;
+        }
         const how = await closeOverlay(driver, [], { app, win });
         if (how) { log(`Đóng màn che ngoài app: ${how}`); loading = 0; step--; await driver.pause(1000); continue; }
       }
@@ -163,6 +198,7 @@ export async function exploreLoop(id, appId, driver, job, opts, { runClaude = de
       continue;
     }
     loading = 0;
+    foreignCloses = 0;
     // Paywall / IAP / tờ thanh toán: tool KHÔNG mua, chỉ ghi màn rồi đóng bằng code (AI hay bấm Subscribe rồi kẹt)
     const paywall = looksLikePaywall(elements);
     if (paywall || checkAlert) {
@@ -171,7 +207,10 @@ export async function exploreLoop(id, appId, driver, job, opts, { runClaude = de
       if (paywall || foreign) {
         const n = (overlayCloses.get(screen.id) || 0) + 1;
         overlayCloses.set(screen.id, n);
-        if (n > 3) {
+        if (n > MAX_OVERLAY_CLOSES) {
+          const again = (overlayRelaunches.get(screen.id) || 0) + 1;
+          overlayRelaunches.set(screen.id, again);
+          if (again > 2) { log('Paywall / màn che vẫn kẹt sau 2 lần mở lại app → dừng khám phá (không giữ thiết bị tới hết giờ)'); break; }
           log('Đóng paywall nhiều lần vẫn kẹt → mở lại app');
           overlayCloses.set(screen.id, 0);
           await relaunchApp(driver, app);
@@ -209,7 +248,12 @@ export async function exploreLoop(id, appId, driver, job, opts, { runClaude = de
               pTried.push(`${a.action}${a.action === 'tapPoint' ? ` ${Math.round(a.x)},${Math.round(a.y)}` : a.locator ? ` ${a.locator}` : a.text ? ` ${a.text}` : ''}`);
               paywallAi.set(screen.id, pTried);
               const hit = a.action === 'tapPoint' ? elementAtPoint(elements, win, clampPct(a.x), clampPct(a.y)) : elements.find((e) => e.locator === a.locator || e.alts.includes(a.locator));
+              const sc = storeContext(elements, foreign);
+              const blocked = a.action === 'tapPoint'
+                ? pointCheck(elements, win, clampPct(a.x), clampPct(a.y), { paywall: true, store: sc.store, buyCheck: (h) => isBuyTarget(h, true) && !isCloseName(h.name || h.label) })
+                : a.action === 'tap' ? (sc.store ? purchaseCheck(hit, sc) : { ok: true }) : { ok: true };
               if (hit && isBuyTarget(hit, true) && !isCloseName(hit.name || hit.label)) { log(`Paywall: chặn thao tác của AI vì rơi vào nút mua "${hit.name || hit.label}"`); }
+              else if (!blocked.ok) { log(`Paywall: chặn thao tác của AI — ${blocked.why}`); }
               else {
                 try {
                   if (a.action === 'tapPoint') await tapPoint(driver, clampPct(a.x), clampPct(a.y));
@@ -239,7 +283,7 @@ export async function exploreLoop(id, appId, driver, job, opts, { runClaude = de
       plans.set(screen.id, planned.slice(1));
       tried.set(screen.id, [...done, `${p.action} ${p.locator}`]);
       update({ steps: step });
-      const ok = await doAction(driver, p, log, '(theo kế hoạch) ');
+      const ok = await doAction(driver, p, log, '(theo kế hoạch) ', guard(elements));
       if (ok) pending = { from: screen.id, action: { action: p.action, locator: p.locator, text: p.text } };
       checkAlert = checkAlert || !ok;
       await settle(driver, snap, { android: app?.platform === 'Android', ...settleOpts });
@@ -272,7 +316,7 @@ export async function exploreLoop(id, appId, driver, job, opts, { runClaude = de
         log(`Bỏ qua: AI chọn locator không có trên màn (${a.locator})`);
         continue;
       }
-      if (await doAction(driver, a, log)) pending = { from: screen.id, action: { action: a.action, locator: a.locator, text: a.text } };
+      if (await doAction(driver, a, log, '', guard(elements))) pending = { from: screen.id, action: { action: a.action, locator: a.locator, text: a.text } };
       else checkAlert = true;
     } else if (a.action === 'back') {
       const back = elements.find((e) => e.type === 'Button' && /^(Back|Close)$/i.test(e.name));

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { preflight } from '../server/runs/preflight.js';
+import { preflight, appiumPortOf } from '../server/runs/preflight.js';
 
 const SIM = 'AEB04EEE-C04D-4DC5-856B-D6784E7B0FCB';
 const app = { id: 'a', platform: 'iOS', appPath: '/x.app', workspace: '/ws' };
@@ -32,6 +32,30 @@ test('preflight: file app không có → fail; cổng 4723 bận (Appium của r
   const r = await preflight({ app, udid: SIM, runCases: [tc('A', { fresh: true })], deps: deps({ exists: () => false, portBusy: async () => true }) });
   assert.equal(byId(r.items).app.status, 'fail');
   assert.equal(byId(r.items).appium.status, 'warn');
+});
+
+test('preflight: workspace tự bật Appium ở cổng đó mà cổng bận → fail; workspace không tự bật Appium → không kiểm cổng; thiếu @wdio → fail', async () => {
+  let r = await preflight({ app, udid: SIM, runCases: [tc('A', { fresh: true })], deps: deps({ portBusy: async (p) => p === 4723, appiumPort: () => 4723 }) });
+  assert.equal(byId(r.items).appium.status, 'fail');
+  assert.match(byId(r.items).appium.fix, /lsof -ti :4723/);
+  assert.equal(r.ok, false);
+  r = await preflight({ app, udid: SIM, runCases: [tc('A', { fresh: true })], deps: deps({ portBusy: async (p) => p === 4800, appiumPort: () => 4800 }) });
+  assert.equal(byId(r.items).appium.label, 'Cổng Appium 4800');
+  r = await preflight({ app, udid: SIM, runCases: [tc('A', { fresh: true })], deps: deps({ portBusy: async () => true, appiumPort: () => null }) });
+  assert.equal(byId(r.items).appium, undefined);
+  r = await preflight({ app, udid: SIM, runCases: [tc('A', { fresh: true })], deps: deps({ wdioInstalled: () => false }) });
+  assert.equal(byId(r.items).wdio.status, 'fail');
+  assert.match(byId(r.items).wdio.fix, /npm install/);
+  r = await preflight({ app, udid: SIM, runCases: [tc('A', { fresh: true })], deps: deps({ wdioInstalled: () => true }) });
+  assert.equal(byId(r.items).wdio, undefined);
+});
+
+test('appiumPortOf: đọc cổng từ wdio.conf.js của workspace (service appium mặc định 4723, port cấu hình, không có service)', () => {
+  const read = (txt) => () => txt;
+  assert.equal(appiumPortOf('/ws', read("services: [['appium', { command: 'appium' }]],")), 4723);
+  assert.equal(appiumPortOf('/ws', read("services: [['appium', { args: { port: 4800 } }]],")), 4800);
+  assert.equal(appiumPortOf('/ws', read("hostname: 'x', port: 4723, services: []")), null);
+  assert.equal(appiumPortOf('/ws', () => { throw new Error('ENOENT'); }), undefined);
 });
 
 test('preflight (dry-run): script lỗi cú pháp → fail; script cũ hơn test case → warn liệt kê case', async () => {

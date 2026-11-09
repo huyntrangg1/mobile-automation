@@ -59,13 +59,57 @@ export const beforeEachTest = () => resetCurrent();
 // Trạng thái test case:
 //   passed · failed (kết quả khác mong đợi — AssertionError) · blocked (dừng vì lỗi khác: môi trường / bug chặn luồng)
 //   skipped (it.skip / describe.skip — ghi bởi SkipReporter) · notrun (đã đăng ký planTest nhưng không chạy lần này)
-// Blocked do môi trường (session Appium / WebDriver, thiếu data, thiếu biến môi trường) → không tạo bug
-const ENV_ERROR = /ECONN|socket hang up|session|WebDriverError: (?!.*no such element)|Appium|xcodebuild|WDA|WebDriverAgent|Thiếu biến môi trường|TC trước bị chặn|Chuẩn bị tài khoản|Sheet TestData|Sheet TestCases|không có sheet|ENOENT/i;
+// blockKind của case Blocked:
+//   env    — môi trường / công cụ / kịch bản test (không tạo bug): không khởi động được phiên Appium, thiếu data, thiếu biến môi trường,
+//            thiếu hook, bước chỉ chạy nền tảng khác, locator không dùng được, thiếu script, máy ảo không làm được (vd tắt mạng trên
+//            iOS Simulator), phần tử hết hạn giữa chừng, TC trước bị chặn
+//   defect — bug của app chặn luồng, gồm app crash / app không còn chạy
+//   review — "cần xem": không chắc lỗi của ai (case trước để app sai màn; phiên Appium mất giữa chừng ở case đầu tiên — thường do
+//            app crash). Vẫn tạo bug, kèm danh sách Cần xem riêng
+const ENV_ERROR = /ECONN|socket hang up|Could not start a new session|session not created|Failed to create session|Appium|xcodebuild|WDA|WebDriverAgent|instrumentation process|UiAutomator2 server|Thiếu biến môi trường|TC trước bị chặn|Chuẩn bị tài khoản|Sheet TestData|Sheet TestCases|không có sheet|ENOENT|Chưa khai báo hook|chỉ chạy trên Android|chỉ chạy trên iOS|Invalid CSS selector|Chưa có script|không giả lập|expired from the internal cache|stale element/i;
+// App crash / không còn chạy (Appium: "The application under test with bundle id … is not running, possibly crashed")
+const APP_CRASH = /application under test[^\n]*(?:is not running|crashed|terminated)|(?:app|application)\b[^\n]{0,80}\b(?:is not running|has crashed|crashed|was terminated|terminated unexpectedly)|possibly crashed|ApplicationNotRunning/i;
+// Phiên Appium mất giữa chừng: case đầu của chuỗi → cần xem (thường app crash kéo theo), các case sau liên tiếp → môi trường
+const SESSION_GONE = /session is either terminated|invalid session id|no such session|NoSuchDriver|session (?:was |has been )?(?:terminated|deleted|not started)|Session does not exist/i;
+const WRONG_SCREEN = /để app sai màn/i;
+export const BLOCK_RULES = { ENV_ERROR, APP_CRASH, SESSION_GONE, WRONG_SCREEN };
+
+// Phân loại 1 lỗi (không biết case trước) → env | defect | review | session (phiên mất: resolveBlockKinds quyết theo case trước)
+//   stored: blockKind đã ghi (bản cũ) — giữ khi không quy tắc nào khớp (vd so Figma lỗi ghi sẵn 'env'),
+//   trừ 'env' do quy tắc cũ quá rộng (mọi WebDriverError / chữ "session") → defect
+export function blockKindOf(error, stored = null) {
+  const msg = String(error?.message || error || '');
+  if (APP_CRASH.test(msg) && !/instrumentation process|UiAutomator2 server/i.test(msg)) return 'defect';
+  if (SESSION_GONE.test(msg)) return 'session';
+  if (WRONG_SCREEN.test(msg)) return 'review';
+  if (ENV_ERROR.test(msg)) return 'env';
+  if (stored === 'env' && /WebDriverError|session/i.test(msg)) return 'defect';
+  return stored || 'defect';
+}
+
+// Theo thứ tự chạy: case Blocked vì phiên Appium mất → 'review' nếu là case đầu của chuỗi (case trước không bị chặn vì crash /
+// phiên mất), các case sau liên tiếp → 'env' (hệ quả). Trả về list mới, giữ nguyên thứ tự
+export function resolveBlockKinds(list) {
+  let prevBroken = false;
+  return list.map((r) => {
+    if (r.status !== 'blocked') {
+      if (!['skipped', 'notrun'].includes(r.status)) prevBroken = false;
+      return r;
+    }
+    let kind = blockKindOf(r.error, r.blockKind);
+    const broken = kind === 'session' || (kind === 'defect' && APP_CRASH.test(String(r.error || '')));
+    if (kind === 'session') kind = prevBroken ? 'env' : 'review';
+    prevBroken = broken;
+    return { ...r, blockKind: kind };
+  });
+}
+
 export function statusOf(passed, error) {
   if (passed) return { status: 'passed' };
   const msg = String(error?.message || error || '');
   if (error?.name === 'AssertionError' || /^AssertionError/.test(msg) || error?.matcherResult) return { status: 'failed' };
-  return { status: 'blocked', blockKind: ENV_ERROR.test(msg) ? 'env' : 'defect' };
+  const kind = blockKindOf(msg);
+  return { status: 'blocked', blockKind: kind === 'session' ? 'review' : kind };
 }
 
 const writeJson = (reports, name, data) => {
@@ -149,6 +193,9 @@ const dataUrl = (file) => (file && fs.existsSync(file)
 // Trả về { html, xlsx, synced } — xlsx: file kết quả tổng hợp; synced: các file test case đã ghi kết quả (nút Export Excel tải các file này)
 // appName: tên app hiện trên tiêu đề report và tên file Excel
 // open: mở report trên trình duyệt sau khi tạo (bỏ qua khi chạy CI hoặc REPORT_OPEN=0)
+const readJsonl = (f) => {
+  try { return fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).flatMap((l) => { try { return [JSON.parse(l)]; } catch { return []; } }); } catch { return []; }
+};
 export async function buildHtml(reports, startedAt, { sync = true, appName = 'App', open = false } = {}) {
   const { results, html, share } = reportDirs(reports);
   if (!fs.existsSync(results)) return null;
@@ -156,14 +203,15 @@ export async function buildHtml(reports, startedAt, { sync = true, appName = 'Ap
   const planned = fs.readdirSync(results).filter((f) => f.startsWith('planned-')).flatMap((f) => JSON.parse(fs.readFileSync(path.join(results, f))));
   const envFile = path.join(results, 'env.json');
   const env = fs.existsSync(envFile) ? JSON.parse(fs.readFileSync(envFile)) : {};
-  const list = files.map((f) => {
+  // Phân loại lại theo quy tắc hiện tại (kết quả ghi bởi bản cũ cũng được tách đúng: môi trường / bug app / cần xem)
+  const list = resolveBlockKinds(files.map((f) => {
     const r = JSON.parse(fs.readFileSync(path.join(results, f)));
     return {
       ...r, status: r.status || (r.passed ? 'passed' : 'failed'),
-      failShot: dataUrl(r.failShot), bugs: r.bugs.map((b) => ({ ...b, image: dataUrl(b.image) })),
+      failShot: dataUrl(r.failShot), bugs: (r.bugs || []).map((b) => ({ ...b, image: dataUrl(b.image) })),
       flows: (r.flows || []).map((f) => ({ ...f, image: dataUrl(f.image) })),
     };
-  });
+  }));
   // Đã đăng ký nhưng không chạy (lọc --grep / --spec, run bị dừng) → Not Run
   const ran = new Set(list.map((r) => `${r.suite}\u0000${r.title}`));
   const seen = new Set();
@@ -173,7 +221,11 @@ export async function buildHtml(reports, startedAt, { sync = true, appName = 'Ap
     seen.add(key);
     list.push({ suite: p.suite, title: p.title, passed: false, status: 'notrun', duration: 0, error: null, case: p.case || null, bugs: [], failShot: null });
   }
-  const data = { appName, results: list, env, startedAt: startedAt.toLocaleString('vi-VN'), duration: Date.now() - startedAt.getTime() };
+  // Điểm kiểm không làm được tự động (chữ thoáng qua không kịp thấy, trạng thái không có API đọc) — runner ghi unverified.jsonl
+  const unverified = readJsonl(path.join(reports, 'unverified.jsonl'));
+  // Lệch so với script (AI hỗ trợ gỡ kẹt / tool đóng popup ngoài test case) — case Passed vẫn cần người xem lại
+  const deviations = readJsonl(path.join(reports, 'ai-assist.jsonl'));
+  const data = { appName, results: list, env, unverified, deviations, startedAt: startedAt.toLocaleString('vi-VN'), duration: Date.now() - startedAt.getTime() };
   const model = buildModel(data);
   const buf = await resultsWorkbook(model, data);
   const xlsx = path.join(reports, 'test-results.xlsx');

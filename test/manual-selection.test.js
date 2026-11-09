@@ -29,3 +29,23 @@ test('summary đếm automate / manual / có điểm mờ / review / xung đột
   const mi = { cases: [c('S', 'A', 'automate', { ambiguity: [{ code: 'EMPTY_PRE' }] }), c('S', 'B', 'manual', { ambiguity: [{ code: 'EMPTY_PRE' }] }), c('S', 'C', 'automate', { state: 'conflict' })], review: ['x', 'y'] };
   assert.deepEqual(summary(mi), { automate: 2, manual: 1, ambiguous: 1, review: 2, conflicts: 1 });
 });
+
+import { groupReview, cleanProblems } from '../web/src/manualSelection.js';
+
+test('groupReview: gom theo nhãn đầu dòng, bỏ nhãn khỏi nội dung, dòng không nhãn vào "Khác"', () => {
+  const g = groupReview(['[Manual] A: x', '[Quy tắc] y', '[Manual] B: z', 'lạ']);
+  assert.deepEqual(g.map((x) => [x.label, x.items.length]), [['Manual', 2], ['Quy tắc', 1], ['Khác', 1]]);
+  assert.equal(g[0].items[0], 'A: x');
+  assert.deepEqual(groupReview([]), []);
+});
+
+test('cleanProblems: bỏ tiền tố "Sheet X:", tách ý lặp "Khung:", bỏ trùng', () => {
+  const out = cleanProblems(['Sheet Onboarding v1.0.4: Khung: Luồng "A" step 1: sai; Khung: Luồng "A" step 2: thiếu; Khung: Luồng "A" step 1: sai']);
+  assert.deepEqual(out, ['Khung: Luồng "A" step 1: sai', 'Khung: Luồng "A" step 2: thiếu']);
+});
+
+test('groupReview: dòng "[Chạy thử]" gom dưới nhóm "Chạy thử trên thiết bị"', () => {
+  const g = groupReview(['[Chạy thử] Luồng "A → B": bỏ bước 2 "Tap Continue" (app tự chuyển sang màn "B")', '[App] x']);
+  assert.deepEqual(g.map((x) => x.label), ['Chạy thử trên thiết bị', 'App']);
+  assert.match(g[0].items[0], /^Luồng "A → B"/);
+});

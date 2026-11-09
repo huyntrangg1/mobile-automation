@@ -23,11 +23,43 @@ const MISUSE = [
   { call: 'logStep(', re: /(^|[^.\w])logStep\s*\(/m },
 ];
 const K_TABLES = { v2: fileURLToPath(new URL('../ai/prompts/k-table-v2.md', import.meta.url)), legacy: fileURLToPath(new URL('../ai/prompts/k-table-legacy.md', import.meta.url)) };
-const kTable = (ws) => {
-  let v2 = false;
-  try { v2 = /\basync count\(/.test(fs.readFileSync(path.join(ws, 'src/runner/steps.js'), 'utf8')); } catch {}
-  return fs.readFileSync(v2 ? K_TABLES.v2 : K_TABLES.legacy, 'utf8').trim();
-};
+// Mã case dùng được làm tên region trong file script (scriptFile.js bỏ qua mã khác → case "đã gen" mà không có code)
+export const VALID_TC_ID = /^[A-Za-z0-9_.-]+$/;
+export const BAD_TC_ID = 'Mã case có ký tự không hỗ trợ (dấu cách / dấu tiếng Việt) — đổi TC ID';
+// Hàm k luôn có (không khai báo dạng "async tên(" trong steps.js)
+const K_ALWAYS = ['log', 'byText', 'textOf', 'fill', 'vars', 'check'];
+
+// Tên các hàm k mà src/runner/steps.js của workspace thật sự có (đọc "async tên(" trong object trả về).
+// null = không đọc được file (không lọc)
+export function stepsMethods(ws) {
+  let src;
+  try { src = fs.readFileSync(path.join(ws, 'src/runner/steps.js'), 'utf8'); } catch { return null; }
+  const names = new Set(K_ALWAYS);
+  for (const m of src.matchAll(/^[ \t]+async\s+([A-Za-z_$][\w$]*)\s*\(/gm)) names.add(m[1]);
+  return names;
+}
+
+// Bảng k gửi cho AI, chỉ giữ dòng gọi hàm k mà workspace có (workspace tạo từ template cũ có thể thiếu closePopup, tapOutside…).
+// → { text, missing: tên hàm k bị thiếu, dropped: cột đầu của các dòng bị bỏ }
+export function kTableFor(ws) {
+  const methods = stepsMethods(ws);
+  const v2 = !!methods?.has('count');
+  const raw = fs.readFileSync(v2 ? K_TABLES.v2 : K_TABLES.legacy, 'utf8').trim();
+  if (!methods) return { text: raw, missing: [], dropped: [] };
+  const missing = new Set();
+  const dropped = [];
+  const lines = raw.split('\n').filter((l) => {
+    if (!l.startsWith('|')) return true;
+    const used = [...l.matchAll(/\bk\.([A-Za-z_$][\w$]*)\s*\(/g)].map((m) => m[1]);
+    const lack = used.filter((n) => !methods.has(n));
+    if (!lack.length) return true;
+    lack.forEach((n) => missing.add(n));
+    dropped.push(l.split('|')[1].replace(/\*\*/g, '').trim());
+    return false;
+  });
+  return { text: lines.join('\n'), missing: [...missing], dropped };
+}
+const normEol = (s) => String(s).replace(/\r\n?/g, '\n');
 const fill = (tpl, v) => tpl.replace(/\{\{(\w+)\}\}/g, (_, k) => String(v[k] ?? ''));
 
 // Phần "Instrumenting a spec" + "Rules for checks" của skill test-report (đọc lúc chạy để luôn theo bản mới)
@@ -72,17 +104,27 @@ export function createGenerator({ store, map, emit, runClaude = defaultRunClaude
   const hashOf = (code) => crypto.createHash('sha1').update(code).digest('hex');
   const casesOf = (appId, file) => store.list('cases').filter((c) => c.appId === appId && c.file === file).sort((a, b) => a.order - b.order);
 
-  // Ghi file với region mới; lỗi cú pháp → trả lỗi, file giữ nguyên
+  // Ghi file với region mới; lỗi cú pháp → trả lỗi, file giữ nguyên.
+  // Region của case không còn (xoá / đổi TC ID) hoặc mã case không hợp lệ bị bỏ khi sinh lại → chép file cũ ra .bak trước, báo lại
   async function saveRegions(app, file, change) {
     const p = scriptPath(app, file);
-    const regions = fs.existsSync(p) ? readRegions(fs.readFileSync(p, 'utf8')) : {};
+    const old = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';
+    const regions = old ? readRegions(normEol(old)) : {};
     Object.assign(regions, change);
-    const code = buildScript({ file, order: casesOf(app.id, file).map((c) => c.tcId), regions, helpers: helperModules(app.workspace), pack: app.helperPack });
+    const order = casesOf(app.id, file).map((c) => c.tcId);
+    const code = buildScript({ file, order, regions, helpers: helperModules(app.workspace), pack: app.helperPack });
     const err = await syntaxError(code);
     if (err) return { error: err };
+    const dropped = Object.keys(regions).filter((id) => !order.includes(id) || !VALID_TC_ID.test(id));
+    let backup = null;
+    if (old && dropped.length) {
+      backup = `${p}.${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}.bak`;
+      try { fs.writeFileSync(backup, old); } catch { backup = null; }
+      console.warn(`[script] ${path.basename(p)}: bỏ region ${dropped.join(', ')} (case không còn / mã không hợp lệ)${backup ? ` — bản cũ: ${backup}` : ''}`);
+    }
     fs.mkdirSync(path.dirname(p), { recursive: true });
     fs.writeFileSync(p, code);
-    return { path: p };
+    return { path: p, ...(dropped.length ? { dropped, backup } : {}) };
   }
 
   function warningsFor(c, table, platform = 'iOS') {
@@ -106,6 +148,14 @@ export function createGenerator({ store, map, emit, runClaude = defaultRunClaude
     return out;
   }
 
+  // Workspace thiếu hàm k cho keyword case dùng (steps.js cũ / sửa tay) → nhắc chuẩn bị lại
+  function kWarnings(c, kt) {
+    if (!kt.missing.length) return [];
+    const norm = (x) => String(x || '').toLowerCase().trim();
+    const hit = c.rows.some((r) => r.keyword && kt.dropped.some((d) => d.split('/').map(norm).some((part) => part && (part === norm(r.keyword) || part.startsWith(`${norm(r.keyword)} `)))));
+    return hit ? [`Workspace thiếu k.${kt.missing.join(', k.')} (src/runner/steps.js cũ) — AI viết code riêng cho keyword đó; vào Cài đặt app → Chuẩn bị lại để dùng bản mới`] : [];
+  }
+
   // Script trước khi bấm gen — dừng gen thì trả lại đúng trạng thái này (vd vẫn "Đã gen" bản cũ)
   const before = new Map();
   const controllers = new Map(); // case đang gọi AI → AbortController
@@ -122,11 +172,13 @@ export function createGenerator({ store, map, emit, runClaude = defaultRunClaude
     if (!c) return null; // case bị xoá (import lại) trong lúc chờ gen
     const app = store.get('apps', c.appId);
     const startHash = c.rowsHash;
+    if (!VALID_TC_ID.test(String(c.tcId))) return setScript(c, { ...c.script, status: 'failed', error: `${BAD_TC_ID} ("${c.tcId}")`, warnings: [] });
     setScript(c, { ...c.script, status: 'generating', error: null });
     try {
       map.exportLocators(app.id);
       const table = map.locatorTable(app.id);
       const helpers = helperModules(app.workspace);
+      const kt = kTableFor(app.workspace);
       const aliases = Object.fromEntries(store.list('screens').filter((s) => s.appId === app.id).map((s) => [s.name, s.aliases || []]));
       const base = {
         appName: app.name, platform: app.platform || 'iOS', file: c.file, tcId: c.tcId, title: c.title,
@@ -138,7 +190,7 @@ export function createGenerator({ store, map, emit, runClaude = defaultRunClaude
         keywords: keywordsNote(app.workspace),
         skillRules: skillRules(),
         // Bảng k: runner mới của template có đủ keyword v2; helper pack có runner riêng (chưa có) → bảng cũ
-        kTable: kTable(app.workspace),
+        kTable: kt.text,
         // Hành vi riêng của app tester ghi ở Cài đặt app (vd tutorial tự chuyển slide) — AI không tự biết được
         appNotes: app.aiNotes ? `# Ghi chú về app (tester viết — tuân theo khi viết code)\n${app.aiNotes}\n` : '',
       };
@@ -165,7 +217,11 @@ export function createGenerator({ store, map, emit, runClaude = defaultRunClaude
         }
         const saved = await withFile(`${app.id}:${c.file}`, () => saveRegions(app, c.file, { [c.tcId]: body }));
         if (!saved.error) {
-          const warnings = [...warningsFor(c, table, app.platform || 'iOS'), ...(r.data.warnings || [])];
+          // Đọc lại file: region của case phải có thật (khung bỏ qua mã case lạ / case vừa bị xoá khỏi Excel)
+          let onDisk = {};
+          try { onDisk = readRegions(normEol(fs.readFileSync(saved.path, 'utf8'))); } catch {}
+          if (!onDisk[c.tcId]) return setScript(store.get('cases', c.id) || c, { ...c.script, status: 'failed', error: VALID_TC_ID.test(c.tcId) ? 'Không ghi được code của case vào file script (case không còn trong Excel?) — import lại rồi gen lại' : `${BAD_TC_ID} ("${c.tcId}")`, warnings: [] });
+          const warnings = [...warningsFor(c, table, app.platform || 'iOS'), ...kWarnings(c, kt), ...(r.data.warnings || [])];
           // Import lại đổi bước trong lúc gen → script này theo bước cũ
           const stale = store.get('cases', c.id)?.rowsHash !== startHash;
           return setScript(store.get('cases', c.id) || c, { status: stale ? 'stale' : 'generated', warnings, reviewed: false, editedByHand: false, path: saved.path, error: null, generatedAt: new Date().toISOString() });
@@ -228,8 +284,13 @@ export function createGenerator({ store, map, emit, runClaude = defaultRunClaude
       const p = scriptPath(app, file);
       const cur = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';
       if (baseHash !== hashOf(cur)) return { conflict: true };
-      const before = readRegions(cur);
-      const regions = readRegions(code);
+      const before = readRegions(normEol(cur));
+      // Editor / Windows lưu xuống dòng CRLF → regex region không khớp → mất hết thay đổi. Chuẩn hoá trước khi đọc
+      const text = normEol(code);
+      const regions = readRegions(text);
+      if (!Object.keys(regions).length && (/\/\/ #region \S+/.test(text) || Object.keys(before).length)) {
+        return { regionError: true, error: 'Không đọc được region nào của case trong code gửi lên (thiếu / sai dòng "// #region <TC>" … "// #endregion <TC>") — chưa lưu để không mất code' };
+      }
       const saved = await saveRegions(app, file, regions);
       if (saved.error) return saved;
       return { ...saved, changed: Object.keys(regions).filter((k) => regions[k] !== before[k]) };

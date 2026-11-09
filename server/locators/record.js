@@ -6,6 +6,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseElements, screenSignature, isTransient } from './pageSource.js';
 import { systemDialog } from '../device/platforms.js';
+import { buildStamp } from '../apps/buildStamp.js';
+import { recordNavEdge, arriveOf, targetOf } from '../apps/navGraph.js';
 
 const MAX_LOG = 300;
 
@@ -13,7 +15,7 @@ const MAX_LOG = 300;
 // iOS mỗi lần hỏi mất ~2 giây khi không có popup và chặn vòng đọc → màn lướt qua trong lúc hỏi bị sót (đo: màn "Recipe imported"
 // hiện 1,8 giây rơi đúng lúc hỏi) → chỉ hỏi khi màn đứng yên lâu (tester có thể đang bị popup chặn), và thưa
 export const RECORD_DEFAULTS = { pollMs: 250, alertIdleMs: 10000, alertEveryMs: 30000 };
-export function createCaptures({ store, lock, emit, map, openSession, attachSession = openSession, loops = {}, pollMs = RECORD_DEFAULTS.pollMs, alertIdleMs = RECORD_DEFAULTS.alertIdleMs, alertEveryMs = RECORD_DEFAULTS.alertEveryMs }) {
+export function createCaptures({ store, lock, emit, map, openSession, attachSession = openSession, loops = {}, pollMs = RECORD_DEFAULTS.pollMs, alertIdleMs = RECORD_DEFAULTS.alertIdleMs, alertEveryMs = RECORD_DEFAULTS.alertEveryMs, buildStampOf = buildStamp }) {
   const running = new Map(); // id → { stop: bool }
   const liveFile = (id) => path.join(map.dataDir, 'captures', `${id}.png`);
 
@@ -133,14 +135,39 @@ export function createCaptures({ store, lock, emit, map, openSession, attachSess
 
   const LOOPS = { record: recordLoop, ...loops };
 
+  // Bấm ở màn A sang màn B (AI khám phá / đi tới màn) → ghi cạnh vào sơ đồ màn của workspace (data/nav-graph.json, cùng định dạng
+  // runner/navgraph.js, theo build hiện tại) để Run và chuyển đổi test case dùng. Ghi lúc job kết thúc: tên màn lúc đó là tên cuối
+  // (AI / tester có thể đổi tên màn mới ngay sau khi tới). Bỏ nút mua; màn không còn trong map (đã xoá / gộp) → bỏ
+  function flushNavEdges(app, list) {
+    if (!list.length || !app.workspace) return 0;
+    const build = buildStampOf(app.appPath)?.stamp;
+    if (!build) return 0;
+    let n = 0;
+    for (const e of list) {
+      const from = store.get('screens', e.from);
+      const to = store.get('screens', e.to);
+      if (!from || !to || from.name === to.name) continue;
+      const arrive = arriveOf(to.elements || []);
+      if (!arrive) continue;
+      if (recordNavEdge(app.workspace, build, { from: from.name, to: to.name, sel: e.locator, target: targetOf(from.elements || [], e.locator), arrive })) n++;
+    }
+    return n;
+  }
+
   async function run(id, app, opts, job) {
     let session = null;
+    const navEdges = []; // { from, to (screen id), locator }
+    const addEdge = (f, t, a) => {
+      const e = map.addEdge(app.id, f, t, a);
+      if (a?.action === 'tap' && a.locator) navEdges.push({ from: f, to: t, locator: a.locator });
+      return e;
+    };
     try {
       log(id, `Đang mở app trên ${app.platform === 'Android' ? 'thiết bị Android' : 'Simulator'}…`);
       // fromCurrent: gắn vào app đang mở sẵn (không cài / mở lại) → khám phá bắt đầu từ đúng màn tester đang đứng
       session = await (opts.fromCurrent ? attachSession : openSession)({ app, udid: opts.udid });
       log(id, opts.mode === 'record' ? `Sẵn sàng — bấm qua app trên ${app.platform === 'Android' ? 'thiết bị Android' : 'Simulator'}, tool tự ghi lại từng màn.` : 'AI bắt đầu khám phá app.');
-      await LOOPS[opts.mode](id, app.id, session.driver, job, { ...opts, app, snap: (d, o) => snap(id, app.id, d, o), log: (t) => log(id, t), update: (p) => update(id, p), renameScreen: (sid, n) => map.renameScreen(sid, n), screens: () => store.list('screens').filter((s) => s.appId === app.id), edges: { list: () => map.edges(app.id), add: (f, t, a) => map.addEdge(app.id, f, t, a) } });
+      await LOOPS[opts.mode](id, app.id, session.driver, job, { ...opts, app, snap: (d, o) => snap(id, app.id, d, o), log: (t) => log(id, t), update: (p) => update(id, p), renameScreen: (sid, n) => map.renameScreen(sid, n), screens: () => store.list('screens').filter((s) => s.appId === app.id), edges: { list: () => map.edges(app.id), add: addEdge } });
       const c = store.get('captures', id);
       if (c.status === 'running') update(id, { status: job.stop ? 'stopped' : 'done' });
     } catch (e) {
@@ -148,6 +175,7 @@ export function createCaptures({ store, lock, emit, map, openSession, attachSess
     } finally {
       await session?.close().catch(() => {});
       try { map.exportLocators(app.id); } catch {}
+      try { const n = flushNavEdges(app, navEdges); if (n) log(id, `Ghi ${n} đường chuyển màn vào sơ đồ màn (nav-graph) của app`); } catch {}
       update(id, { finishedAt: new Date().toISOString() });
       running.delete(id);
       lock.release(id);
@@ -169,7 +197,7 @@ export function createCaptures({ store, lock, emit, map, openSession, attachSess
     emit('lock', lock.current());
     await lock.ready?.();
     store.put('captures', { id, appId, mode: opts.mode, udid: opts.udid, status: 'running', screensFound: 0, polls: 0, seen: [], current: null, log: [], startedAt: new Date().toISOString() });
-    const job = { stop: false };
+    const job = { stop: false, ctl: new AbortController() }; // ctl: bấm Dừng → huỷ lần gọi AI đang chạy
     running.set(id, job);
     run(id, app, opts, job);
     return id;
@@ -179,6 +207,7 @@ export function createCaptures({ store, lock, emit, map, openSession, attachSess
     const job = running.get(id);
     if (!job) return;
     job.stop = true;
+    try { job.ctl?.abort(); } catch {}
     while (running.has(id)) await new Promise((r) => setTimeout(r, 20));
   }
 

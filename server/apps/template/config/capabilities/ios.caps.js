@@ -19,8 +19,9 @@ const ios = {
   ...(process.env.WDA_PREINSTALLED === '1'
     ? { 'appium:usePreinstalledWDA': true }
     : { 'appium:derivedDataPath': WDA_DIR, 'appium:usePrebuiltWDA': process.env.WDA_PREBUILT === '1' }),
-  // Chạy case để đưa app tới một màn rồi dùng tiếp: giữ hiệu ứng (REDUCE_MOTION=0), không tắt app khi xong (KEEP_APP_OPEN=1)
-  'appium:reduceMotion': process.env.REDUCE_MOTION !== '0',
+  // Giữ hiệu ứng / animation như máy thật (mặc định): bật "Giảm chuyển động" làm app bỏ qua animation → kết quả khác test tay
+  //   (vd màn Welcome nhảy thẳng khung cuối). REDUCE_MOTION=1 để bật lại khi cần chạy nhanh. KEEP_APP_OPEN=1: không tắt app khi xong
+  'appium:reduceMotion': process.env.REDUCE_MOTION === '1',
   ...(process.env.KEEP_APP_OPEN === '1' ? { 'appium:shouldTerminateApp': false } : {}),
   // KHÔNG đặt appium:language / appium:locale cho Simulator: Appium sẽ ghi lại ngôn ngữ rồi khởi động lại SpringBoard / tccd / akd,
   // trên Simulator iOS 26 chưa có .GlobalPreferences.plist thì lệnh đó lỗi "'/bin/launchctl' failed with exit code 3" và session không mở được.

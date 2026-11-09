@@ -26,9 +26,9 @@ export function splitGroups(order, groups, max = 10) {
   return clean.flatMap((g) => Array.from({ length: Math.ceil(g.length / max) }, (_, i) => g.slice(i * max, (i + 1) * max)));
 }
 
-export async function buildSkeleton({ sheet, cases, runClaude, signal, feedback }) {
-  const system = `${fs.readFileSync(PROMPT, 'utf8')}\n${rulesFrom('Order the TCs into runs')}`;
-  const list = cases.map((c) => ({ id: c.id, module: c.module, scenario: c.scenario, pre: c.pre, ...(c.clarification ? { clarification: c.clarification } : {}) }));
+export async function buildSkeleton({ sheet, cases, runClaude, signal, feedback, appText = '' }) {
+  const system = `${fs.readFileSync(PROMPT, 'utf8')}\n${rulesFrom('Order the TCs into runs')}${appText}`;
+  const list = cases.map((c) => ({ id: c.id, module: c.module, scenario: c.scenario, pre: c.pre, steps: c.steps, ...(c.clarification ? { clarification: c.clarification } : {}) }));
   const r = await runClaude({ system, prompt: `Sheet: ${sheet}\nCác case:\n${JSON.stringify(list, null, 1)}${feedback ? `\n\nfeedback (lỗi ở luồng dùng chung lần trước, sửa đúng các dòng này):\n${feedback}` : ''}`, schema: SCHEMA, noTools: true, timeoutMs: 300000, model: lightModel(), signal });
   if (!r.ok) return { ok: false, error: `Lập khung sheet "${sheet}" lỗi: ${r.error}` };
   if (!Array.isArray(r.data?.order) || !Array.isArray(r.data?.groups)) return { ok: false, error: `Lập khung sheet "${sheet}": AI trả thiếu order / groups` };

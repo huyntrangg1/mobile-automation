@@ -26,11 +26,21 @@ const LEAN_SYSTEM = 'Bạn là trợ lý tự động hoá kiểm thử. Làm đ
 // lean: giữ đúng các công cụ trong allowedTools (vd chỉ Read để xem ảnh) nhưng tắt MCP, dùng system prompt gọn, không nạp settings / skill.
 //   Dùng cho vòng lặp nhiều lần gọi liên tiếp (AI Smoke Test): đo thật một lần gọi mặc định nạp ~33.000 token định nghĩa công cụ / MCP.
 //   KHÔNG dùng khi cần công cụ MCP (đọc PRD / Figma) — lean tắt hết MCP.
-export function runClaude({ prompt, schema, cwd, timeoutMs = 180000, allowedTools = ['Read'], noTools = false, lean = false, noPersist = false, onUsage, system, model = process.env.QAPD_AI_MODEL, signal, spawnImpl = spawn }) {
+export function runClaude({ prompt, schema, cwd, timeoutMs = 180000, allowedTools = ['Read'], noTools = false, lean = false, noPersist = false, onUsage, system, model = process.env.QAPD_AI_MODEL, signal, spawnImpl = spawn, killGraceMs = 5000 }) {
   return new Promise((resolve) => {
     let done = false;
     let timer = null;
-    const finish = (r) => { if (!done) { done = true; clearTimeout(timer); resolve(r); } };
+    let proc;
+    let exited = false;
+    let onAbort = null;
+    // Gỡ listener abort khi xong: signal dùng chung cho cả lần chạy (smoke / khám phá gọi AI hàng trăm lần) → không rò listener
+    const finish = (r) => { if (!done) { done = true; clearTimeout(timer); if (onAbort) signal?.removeEventListener?.('abort', onAbort); resolve(r); } };
+    // SIGTERM rồi SIGKILL nếu claude không thoát sau killGraceMs (treo khi đang gọi tool / MCP)
+    const kill = () => {
+      try { proc?.kill('SIGTERM'); } catch {}
+      const t = setTimeout(() => { if (!exited) { try { proc?.kill('SIGKILL'); } catch {} } }, killGraceMs);
+      t.unref?.();
+    };
     const args = ['-p', '--output-format', 'json'];
     if (schema) args.push('--json-schema', JSON.stringify(schema));
     if (noTools) args.push('--tools', '', '--strict-mcp-config', '--system-prompt', system || LEAN_SYSTEM, '--setting-sources', '', '--disable-slash-commands');
@@ -38,7 +48,6 @@ export function runClaude({ prompt, schema, cwd, timeoutMs = 180000, allowedTool
     else if (allowedTools?.length) args.push('--allowedTools', allowedTools.join(','));
     if (noPersist) args.push('--no-session-persistence'); // không lưu transcript lên đĩa (vd prompt có mật khẩu tài khoản test)
     if (model) args.push('--model', model);
-    let proc;
     try {
       proc = spawnImpl('claude', args, { cwd, env: process.env, stdio: ['pipe', 'pipe', 'pipe'] });
     } catch (e) {
@@ -47,16 +56,18 @@ export function runClaude({ prompt, schema, cwd, timeoutMs = 180000, allowedTool
     let out = '';
     let err = '';
     timer = setTimeout(() => {
-      proc.kill('SIGTERM');
+      kill();
       finish({ ok: false, error: `Claude quá thời gian (${Math.round(timeoutMs / 1000)}s)` });
     }, timeoutMs);
-    const abort = () => { try { proc.kill('SIGTERM'); } catch {} finish({ ok: false, cancelled: true, error: 'Đã dừng gen' }); };
+    const abort = () => { kill(); finish({ ok: false, cancelled: true, error: 'Đã dừng gen' }); };
     if (signal?.aborted) return abort();
+    onAbort = abort;
     signal?.addEventListener('abort', abort, { once: true });
     proc.stdout.on('data', (d) => { out += d; });
     proc.stderr.on('data', (d) => { err += d; });
     proc.on('error', (e) => finish({ ok: false, error: `Không chạy được claude: ${e.message}` }));
     proc.on('close', (code) => {
+      exited = true;
       if (code !== 0) return finish({ ok: false, error: `Claude lỗi (exit ${code}): ${tail(err || out) || 'không có thông báo'}` });
       let res;
       try { res = JSON.parse(out); } catch {
