@@ -87,6 +87,113 @@ export function fixFlowRows(rows) {
   });
   return out.map((r, i) => ({ ...r, step: i + 1 }));
 }
+// ===== Tự sửa bằng code các lỗi có quy luật (không tốn AI) — chạy trước mỗi lần ghi file =====
+const COMPARE_ALIAS = { equal: 'equals', eq: 'equals', '=': 'equals', '==': 'equals', is: 'equals', contain: 'contains', includes: 'contains', include: 'contains',
+  'not equal': 'not equals', '!=': 'not equals', 'not contain': 'not contains', '>': 'greater than', '>=': 'greater or equal', '<': 'less than', '<=': 'less or equal' };
+const COMPARE_OK = ['equals', 'not equals', 'contains', 'not contains', 'regex', 'greater than', 'greater or equal', 'less than', 'less or equal', 'empty', 'not empty', 'number', 'unit', 'all-on'];
+const PLATFORM_ALIAS = { all: 'All', ios: 'iOS', android: 'Android', both: 'All', '': 'All' };
+// Dòng của 1 TC: thêm check dương sau Verify screen (giữ số step), điền Check label trống, chuẩn hoá Compare / Platform, Set network → Android
+export function autoFixRows(rows) {
+  if (!Array.isArray(rows)) return rows;
+  const fixed = rows.map((r) => {
+    if (!r || typeof r !== 'object') return r;
+    const x = { ...r };
+    if (x.compare != null && x.compare !== '') {
+      const c = String(x.compare).trim().toLowerCase();
+      if (COMPARE_ALIAS[c]) x.compare = COMPARE_ALIAS[c];
+      else if (!COMPARE_OK.includes(c) && !/^date:/.test(c)) x.compare = 'equals';
+      else x.compare = /^date:/.test(c) ? x.compare : c;
+    }
+    if (x.platform != null && PLATFORM_ALIAS[String(x.platform).trim().toLowerCase()] !== undefined) x.platform = PLATFORM_ALIAS[String(x.platform).trim().toLowerCase()];
+    if (x.keyword === 'Set network') x.platform = 'Android';
+    if (x.kind === 'Check' && !String(x.label || '').trim()) x.label = `${x.keyword}${x.target ? ` "${x.target}"` : ''}`;
+    return x;
+  });
+  const out = [];
+  fixed.forEach((r, i) => {
+    out.push(r);
+    if (r?.kind !== 'Nav') return;
+    let ok = false;
+    for (let j = i + 1; j < fixed.length && fixed[j]?.kind === 'Check'; j++) if (fixed[j].screen === r.screen && fixed[j].keyword !== 'Verify not displayed') ok = true;
+    if (!ok) out.push({ step: r.step, screen: r.screen, kind: 'Check', keyword: 'Verify displayed', target: r.target || r.screen, label: `Màn ${r.screen} hiển thị`, platform: r.platform });
+  });
+  return out;
+}
+
+// Lỗi chuỗi tiếp nối (khung): "X có Relaunch app nên phải đứng cuối chuỗi — Y cần fresh = true", "Y: chuỗi tiếp nối quá N TC … fresh = true"
+// → TC phải đặt fresh = true. AI viết lại dòng không sửa được (fresh nằm ở khung) → code sửa khung
+export function chainFreshFixes(problems = []) {
+  const ids = new Set();
+  for (const p of problems) {
+    const m = p.match(/—\s*(\S+) cần fresh = true/) || p.match(/^(\S+): chuỗi tiếp nối quá .*fresh = true/);
+    if (m) ids.add(m[1].replace(/[,:;]$/, ''));
+  }
+  return [...ids];
+}
+
+// ===== Gom đoạn đường đi giống nhau ở Step 0 của nhiều TC thành luồng dùng chung (Run flow) =====
+// Đoạn = các dòng trên 1 màn + Verify screen (Nav) sang màn kế + check ngay sau. Đoạn giống hệt (bỏ qua Check label) ở ≥ minUses TC → 1 luồng.
+// Bước không được đặt trong luồng (Launch fresh, Relaunch, Reset, Background, Set network, Run flow) giữ nguyên trong TC
+const NOT_IN_FLOW = new Set(['Launch fresh', 'Relaunch app', 'Reset app data', 'Background app', 'Set network', 'Run flow']);
+const rowKey = (r) => JSON.stringify([r.kind, r.keyword, r.screen || '', r.target || '', r.value || '', r.compare || '', r.platform || 'All']);
+function segments(rows) {
+  const segs = [];
+  let cur = [];
+  const flush = () => { if (cur.length) segs.push({ rows: cur }); cur = []; };
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    if (NOT_IN_FLOW.has(r.keyword)) { flush(); segs.push({ rows: [r], keep: true }); continue; }
+    cur.push(r);
+    if (r.kind === 'Nav') {
+      while (i + 1 < rows.length && rows[i + 1].kind === 'Check' && rows[i + 1].screen === r.screen) cur.push(rows[++i]);
+      flush();
+    }
+  }
+  flush();
+  return segs;
+}
+export function extractFlows({ testcases, flows = {}, minUses = 3 }) {
+  const step0 = (t) => (t.rows || []).filter((r) => Number(r.step) === 0);
+  const per = new Map(); // tc id → segments of its Step 0
+  const count = new Map(); // key → { rows, uses: Set }
+  for (const t of testcases) {
+    const segs = segments(step0(t));
+    per.set(t.id, segs);
+    for (const sg of segs) {
+      if (sg.keep || !sg.rows.some((r) => r.kind === 'Nav') || !sg.rows.some((r) => r.kind === 'Action')) continue;
+      const key = sg.rows.map(rowKey).join('|');
+      sg.key = key;
+      if (!count.has(key)) count.set(key, { rows: sg.rows, uses: new Set() });
+      count.get(key).uses.add(t.id);
+    }
+  }
+  const out = { ...flows };
+  const nameOf = new Map();
+  const existing = new Map(Object.entries(flows).map(([n, rows]) => [(rows || []).map(rowKey).join('|'), n]));
+  const made = [];
+  for (const [key, c] of count) {
+    if (c.uses.size < minUses) continue;
+    let name = existing.get(key);
+    if (!name) {
+      const from = c.rows.find((r) => r.kind === 'Action')?.screen || c.rows[0].screen || 'Màn';
+      const to = c.rows.find((r) => r.kind === 'Nav')?.screen || 'Màn kế';
+      name = `${from} → ${to}`;
+      for (let k = 2; out[name] && out[name].map(rowKey).join('|') !== key; k++) name = `${from} → ${to} (${k})`;
+      out[name] = c.rows.map((r, i) => ({ ...r, step: i + 1 }));
+      made.push({ name, uses: c.uses.size });
+    }
+    nameOf.set(key, name);
+  }
+  if (!nameOf.size) return { testcases, flows, made };
+  const tcs = testcases.map((t) => {
+    const segs = per.get(t.id);
+    if (!segs.some((sg) => sg.key && nameOf.has(sg.key))) return t;
+    const head = segs.flatMap((sg) => (sg.key && nameOf.has(sg.key) ? [{ step: 0, screen: '', kind: 'Action', keyword: 'Run flow', target: '', value: nameOf.get(sg.key), platform: 'All' }] : sg.rows));
+    return { ...t, rows: [...head, ...(t.rows || []).filter((r) => Number(r.step) !== 0)] };
+  });
+  return { testcases: tcs, flows: out, made };
+}
+
 // Luồng khung đã khai báo mà không TC nào gọi (vd case dùng nó chuyển sang manual) → bỏ trước khi ghi, không để write.mjs chặn cả sheet
 export function dropUnusedFlows(plan) {
   const used = new Set(plan.testcases.flatMap((t) => (t.rows || []).filter((r) => r.keyword === 'Run flow').map((r) => r.value)));
@@ -199,6 +306,27 @@ export async function convertSheet({ sheet, decisions, runClaude, outDir, maxFix
   const plans = () => Object.fromEntries([...results]);
   if (groupErrors.length) return { ok: false, files: [], plans: plans(), problems: groupErrors, review: [] };
 
+  // Gom đường đi giống nhau ở Step 0 (vd chuỗi onboarding lặp ở hàng chục TC) thành luồng dùng chung — ít dòng, ít lỗi lặp lại,
+  // chạy thử trên thiết bị được. Chỉ TC chưa khoá; QAPD_EXTRACT_FLOWS=0 để tắt
+  const gomReview = [];
+  if (process.env.QAPD_EXTRACT_FLOWS !== '0') {
+    const open = [...results.values()].filter((t) => !locked.has(t.id));
+    const ex = extractFlows({ testcases: open, flows: skeleton.flows || {} });
+    if (ex.made.length) {
+      ex.testcases.forEach((t) => results.set(t.id, t));
+      const added = Object.fromEntries(ex.made.map((m) => [m.name, fixFlowRows(ex.flows[m.name])]));
+      skeleton = { ...skeleton, flows: { ...(skeleton.flows || {}), ...added } };
+      for (const m of ex.made) gomReview.push(`[Gom luồng] ${m.uses} case có cùng đoạn đường đi → luồng dùng chung "${m.name}"`);
+      // Luồng mới gom: chạy thử trên thiết bị nếu được bật (chỉ các luồng mới)
+      if (dryRun && !signal?.aborted) {
+        const d = await dryRun({ ...skeleton, flows: added, flowsChecked: undefined }, { signal, onProgress });
+        if (d?.skeleton?.flows) skeleton = { ...skeleton, flows: { ...skeleton.flows, ...d.skeleton.flows } };
+        flowReview = [...flowReview, ...(d?.review || [])];
+      }
+      onSkeleton(skeleton);
+    }
+  }
+
   let last = { problems: [], review: [], files: [] };
   for (let attempt = 0; attempt <= maxFix; attempt++) {
     if (signal?.aborted) return stopped(plans());
@@ -206,6 +334,8 @@ export async function convertSheet({ sheet, decisions, runClaude, outDir, maxFix
     const specDiffs = {};
     const specP = [];
     const covP = [];
+    // Lỗi có quy luật: sửa bằng code trước (không tốn một vòng AI)
+    for (const t of results.values()) if (!locked.has(t.id)) t.rows = autoFixRows(t.rows);
     for (const t of results.values()) {
       const src = byIdSrc.get(t.id);
       if (!src || locked.has(t.id)) continue;
@@ -221,12 +351,26 @@ export async function convertSheet({ sheet, decisions, runClaude, outDir, maxFix
     const appP = plan.testcases.filter((t) => !locked.has(t.id)).flatMap((t) => checkApp({ owner: t.id, rows: t.rows, ctx: appCtx }));
     // Chuỗi tiếp nối: thao tác nằm trong pre (không được chạy), case kiểm trạng thái ban đầu của phần tử case trước vừa bấm
     const chainP = checkChain({ testcases: plan.testcases, only: new Set(plan.testcases.map((t) => t.id).filter((id) => !locked.has(id))) });
-    const extra = [...appP, ...specP, ...covP, ...chainP];
+    // AI chỉ sửa được lỗi theo app khi có tên gần đúng để thay; phần tử không có trong locator map và không có gì gần giống
+    // (thường do màn chưa được lấy locator) → chỉ cảnh báo, không bắt AI viết lại cả nhóm vô ích
+    const fixableApp = appP.filter((p) => !/không có trong locator map/.test(p) || /gần nhất:/.test(p));
+    const extra = [...fixableApp, ...specP, ...covP, ...chainP];
     const warn = [...[...flowWarn, ...appP].map((p) => `[App] ${p}`), ...specP.map((p) => `[Tài liệu] ${p}`), ...covP.map((p) => `[Thiếu kiểm] ${p}`), ...chainP.map((p) => `[Chuỗi] ${p}`)];
-    if (last.ok && (!extra.length || attempt >= Math.min(2, maxFix))) { onProgress({ done: total, total, label: `Đã ghi ${sheet.sheet}` }); return { ok: true, files: last.files, plans: plans(), problems: [], review: [...last.review, ...warn], flowReview, specDiffs }; }
+    if (last.ok && (!extra.length || attempt >= Math.min(Number(process.env.QAPD_WARN_FIX_ROUNDS ?? 1), maxFix))) { onProgress({ done: total, total, label: `Đã ghi ${sheet.sheet}` }); return { ok: true, files: last.files, plans: plans(), problems: [], review: [...last.review, ...gomReview, ...warn], flowReview, specDiffs }; }
+    // Lỗi chuỗi tiếp nối (nằm ở khung, AI viết lại dòng không sửa được) → code đặt TC đó cài lại app rồi chỉ viết lại TC đó
+    const reFresh = chainFreshFixes(last.problems).filter((id) => freshOf.has(id) && freshOf.get(id) !== true);
+    if (reFresh.length && attempt < maxFix) {
+      skeleton = { ...skeleton, order: skeleton.order.map((o) => (reFresh.includes(o.id) ? { ...o, fresh: true } : o)) };
+      reFresh.forEach((id) => { freshOf.set(id, true); locked.delete(id); });
+      onSkeleton(skeleton);
+      onProgress({ done: total - 1, total, label: `Sửa chuỗi tiếp nối: ${reFresh.join(', ')} → cài lại app — viết lại ${reFresh.length} case` });
+      const errs = (await pool(reFresh.map((id) => [id]), concurrency, (g) => runGroup(g, `${g[0]} giờ là case CÀI LẠI APP (fresh = true): viết lại từ đầu, đường đi tới màn bắt đầu ở Step 0 (Run flow / thao tác), không dựa vào case trước`))).filter(Boolean);
+      if (errs.length) return { ok: false, files: [], plans: plans(), problems: errs, review: [] };
+      continue;
+    }
     if (attempt === maxFix) break;
     if (last.ok) last = { ...last, problems: extra };
-    else last = { ...last, problems: [...last.problems, ...(attempt < 2 ? extra : [])] };
+    else last = { ...last, problems: [...last.problems, ...(attempt < Number(process.env.QAPD_WARN_FIX_ROUNDS ?? 1) ? extra : [])] };
     onProgress({ done: total - 1, total, label: `Kiểm tra phát hiện ${last.problems.length} lỗi — AI sửa lại lần ${attempt + 1}/${maxFix}: ${last.problems[0].slice(0, 140)}` });
     // Viết lại đúng các nhóm có case bị nhắc trong lỗi (không nhắc case nào → viết lại tất cả)
     // Case khoá không viết lại: chỉ các case chưa khoá của nhóm

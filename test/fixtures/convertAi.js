@@ -7,7 +7,7 @@ export const goodTc = (id, fresh) => ({
     row({ kind: 'Check', keyword: 'Verify text', target: 'Get Started', value: 'Get Started', compare: 'equals', label: 'Tiêu đề Welcome' }),
   ],
 });
-export const badTc = (id, fresh) => ({ ...goodTc(id, fresh), rows: goodTc(id, fresh).rows.map((r) => (r.kind === 'Check' ? { ...r, label: undefined } : r)) });
+export const badTc = (id, fresh) => ({ ...goodTc(id, fresh), rows: goodTc(id, fresh).rows.map((r) => (r.kind === 'Check' ? { ...r, keyword: 'Lắc máy thật mạnh' } : r)) });
 
 // manual: id case AI quyết "manual" ở bước lọc · rowsFor(id, fresh, callNo): PlanTc cho bước viết dòng
 export function fakeConvertAi({ manual = [], rowsFor = goodTc } = {}) {

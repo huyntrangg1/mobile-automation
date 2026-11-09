@@ -16,6 +16,7 @@ Chọn một "action":
 - "use": phần tử mà bước đang kẹt muốn bấm / nhập / chờ CÓ trên màn nhưng tên khác (vd chữ nút đổi, nút là ảnh có tên khác). "locator" chép NGUYÊN VĂN từ danh sách. Script sẽ làm đúng bước đó với phần tử này.
 - "arrived": (chỉ khi bước kẹt là chờ / tới một màn) app ĐÃ ở đúng màn đích, chỉ là dấu hiệu nhận màn trong script không khớp. "locator" = phần tử chứng minh đang ở màn đó (tiêu đề…).
 - "tap": bấm một phần tử KHÁC để tới được chỗ của bước kẹt (vd app có thêm màn trung gian, popup trong app, bước chọn bắt buộc mà test case thiếu). "locator" chép nguyên văn.
+- "tapPoint": nút cần bấm KHÔNG có trong danh sách phần tử (vẽ bằng ảnh, không có tên) nhưng thấy rõ trên ảnh → chạm theo toạ độ: "x", "y" là % (0–100) chiều rộng / cao màn; "text" = tên nút bạn thấy. Chỉ dùng khi chắc chắn, không chạm vào nút mua.
 - "type": nhập "text" vào ô "locator" (chỉ khi app bắt buộc nhập mới đi tiếp được).
 - "swipe": vuốt, "text" = up | down | left | right (phần tử cần nằm ngoài màn, tờ cần vuốt đóng).
 - "back": quay lại màn trước.

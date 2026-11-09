@@ -214,7 +214,7 @@ test('mọi case chuyển manual → case của file automation cũ bị gỡ kh
 
 test('một case chuyển manual + sheet lỗi → case manual vẫn chờ (file chưa ghi lại), không đánh dấu converted', async () => {
   const flaky = { fail: false };
-  const e = env({ ai: fakeConvertAi({ rowsFor: (id, fresh) => (flaky.fail ? { ...goodTc(id, fresh), rows: goodTc(id, fresh).rows.map((r) => (r.kind === 'Check' ? { ...r, label: undefined } : r)) } : goodTc(id, fresh)) }) });
+  const e = env({ ai: fakeConvertAi({ rowsFor: (id, fresh) => (flaky.fail ? { ...goodTc(id, fresh), rows: goodTc(id, fresh).rows.map((r) => (r.kind === 'Check' ? { ...r, keyword: 'Lắc máy thật mạnh' } : r)) } : goodTc(id, fresh)) }) });
   const f = await makeManual(e.dir, { sheets: [{ name: 'Welcome', cases: [mcase(1), mcase(2)] }] });
   const mi = await analyze(e, f);
   await e.conv.convert(mi.id);
@@ -229,7 +229,7 @@ test('một case chuyển manual + sheet lỗi → case manual vẫn chờ (file
 
 // ---- #11 trạng thái khi không ghi được gì + nhãn tiến độ có số sheet
 test('không sheet nào ghi được → status error (kèm problems); nhiều sheet → nhãn tiến độ có "Sheet i/n"', async () => {
-  const bad = (id, fresh) => ({ ...goodTc(id, fresh), rows: goodTc(id, fresh).rows.map((r) => (r.kind === 'Check' ? { ...r, label: undefined } : r)) });
+  const bad = (id, fresh) => ({ ...goodTc(id, fresh), rows: goodTc(id, fresh).rows.map((r) => (r.kind === 'Check' ? { ...r, keyword: 'Lắc máy thật mạnh' } : r)) });
   const e = env({ ai: fakeConvertAi({ rowsFor: bad }) });
   const f = await makeManual(e.dir, { sheets: [{ name: 'Welcome', cases: [mcase(1)] }] });
   const mi = await analyze(e, f);
@@ -247,4 +247,21 @@ test('không sheet nào ghi được → status error (kèm problems); nhiều s
   await e2.conv.convert(m2.id);
   assert.ok(labels.some((l) => /^Sheet 1\/2 · /.test(l)) && labels.some((l) => /^Sheet 2\/2 · /.test(l)));
   assert.equal(e2.conv.get(m2.id).status, 'done');
+});
+
+// Tester xoá file automation (đã chuyển) rồi chuyển đổi lại → tool tạo lại file đó, không báo "App chưa có file … để cập nhật"
+test('file automation của import đã bị xoá khỏi app → chuyển đổi lại tạo lại đúng file đó', async () => {
+  const e = env();
+  const f = await makeManual(e.dir, { sheets: [{ name: 'Welcome', cases: [mcase(1), mcase(2)] }] });
+  const mi = await analyze(e, f);
+  await e.conv.convert(mi.id);
+  let cur = e.conv.get(mi.id);
+  const out = caseOf(cur, 'TC_W_001').outFile;
+  assert.ok(out);
+  for (const c of e.store.list('cases').filter((x) => x.file === out)) e.store.remove('cases', c.id); // tester xoá file
+  e.conv.convert && (await e.conv.convert(mi.id, { fresh: true }));
+  cur = e.conv.get(mi.id);
+  assert.equal(cur.status, 'done', JSON.stringify(cur.problems || cur.error));
+  assert.ok(cur.cases.every((c) => c.state === 'converted' && !String(c.error || '').includes('để cập nhật')), JSON.stringify(cur.cases.map((c) => c.error)));
+  assert.equal(e.store.list('cases').filter((x) => x.file === out).length, 2);
 });

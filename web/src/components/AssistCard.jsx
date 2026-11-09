@@ -7,6 +7,7 @@ import { ErrorNote } from './ui.jsx';
 
 export const assistLabel = (a) => ({
   use: `Dùng "${a.name || a.locator}" thay cho phần tử của script`,
+  tapPoint: `Chạm "${a.name || ''}" theo toạ độ (${Math.round(a.x)}%, ${Math.round(a.y)}%)`,
   arrived: `Đã ở đúng màn (thấy "${a.name || a.locator}")`,
   tap: `Bấm "${a.name || a.locator}"`,
   type: `Nhập "${a.text}" vào "${a.name || a.locator}"`,

@@ -132,14 +132,18 @@ function withLocators(els) {
 }
 
 // Chữ trông như dữ liệu (số, email, giờ, câu dài) không dùng để nhận diện màn
-const dynamicText = (t) => /\d|@/.test(t) || t.length > 60;
+// Chữ dữ liệu (đổi theo người dùng / thời gian): có số hoặc email → không dùng để nhận màn
+const dynamicText = (t) => /\d|@/.test(t);
+// Câu dài (tiêu đề / mô tả của màn hướng dẫn, onboarding) VẪN dùng để nhận màn, theo phần đầu câu: các màn cùng bố cục
+// (Back + một câu + Continue) chỉ khác nhau ở câu chữ — bỏ câu đi thì mọi màn như vậy thành "giống 100%" và bị gộp làm một
+const textKey = (t) => (t.length > 48 ? t.slice(0, 48) : t).replace(/\s+/g, ' ').trim().toLowerCase();
 
 function keyset(els) {
   const s = new Set();
   for (const e of els) {
     if (INPUTS.has(e.type)) s.add(`${e.type}`);
     else if (e.type === 'Button' && e.name) s.add(`Button:${e.name}`);
-    else if (e.type === 'StaticText' && e.name && !dynamicText(e.name)) s.add(`Text:${e.name}`);
+    else if (e.type === 'StaticText' && e.name && !dynamicText(e.name)) s.add(`Text:${textKey(e.name)}`);
   }
   return s;
 }
@@ -193,7 +197,7 @@ export function partOf(a, b) {
   const [small, big, smallEls] = A.size <= B.size ? [A, B, a] : [B, A, b];
   if ([...small].filter((k) => k.startsWith('Text:')).length < 3) return false;
   const title = screenTitle(smallEls);
-  if (!title || ![...big].some((k) => k.startsWith('Text:') && k.slice(5).replace(/\s+/g, ' ').trim().toLowerCase() === title)) return false;
+  if (!title || ![...big].some((k) => k.startsWith('Text:') && k.slice(5) === textKey(title))) return false;
   let n = 0;
   for (const k of small) if (big.has(k)) n++;
   return n / small.size >= 0.85;

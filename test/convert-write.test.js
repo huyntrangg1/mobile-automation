@@ -8,7 +8,7 @@ const mk = (n, sel = true) => Array.from({ length: n }, (_, i) => ({ id: `TC_W_$
 const good = (id, fresh) => ({ id, fresh, pre: [], rows: [
   ...(fresh ? [{ step: 1, screen: 'Welcome', kind: 'Action', keyword: 'Launch fresh' }, { step: 1, screen: 'Welcome', kind: 'Nav', keyword: 'Verify screen', target: 'Welcome' }] : []),
   { step: 1, screen: 'Welcome', kind: 'Check', keyword: 'Verify text', target: 'Get Started', value: 'Get Started', compare: 'equals', label: 'Tiêu đề Welcome' }] });
-const noLabel = (id, fresh) => ({ ...good(id, fresh), rows: good(id, fresh).rows.map((r) => (r.kind === 'Check' ? { ...r, label: undefined } : r)) });
+const noLabel = (id, fresh) => ({ ...good(id, fresh), rows: good(id, fresh).rows.map((r) => (r.kind === 'Check' ? { ...r, keyword: 'Lắc máy thật mạnh' } : r)) });
 const decisions = (cases) => cases.map((c) => ({ id: c.id, mode: 'automate', reason: '' }));
 
 // AI giả: lập khung (schema có `order`) rồi viết dòng (schema có `testcases`); rowsFor quyết định nội dung theo lần gọi
@@ -42,7 +42,8 @@ test('writePlan: plan hợp lệ → ghi file xlsx thật; case chưa selected n
 });
 
 test('writePlan: Check thiếu label → ok:false, problems nêu TC; "contains" đi vào review', async () => {
-  const bad = await writePlan({ plan: { testcases: [noLabel('TC_W_001', true)], flows: {}, testdata: [], manual: [] }, sheet: { sheet: 'Welcome', cases: mk(1) }, outDir: tmpDir() });
+  const missLabel = { ...good('TC_W_001', true), rows: good('TC_W_001', true).rows.map((r) => (r.kind === 'Check' ? { ...r, label: undefined } : r)) };
+  const bad = await writePlan({ plan: { testcases: [missLabel], flows: {}, testdata: [], manual: [] }, sheet: { sheet: 'Welcome', cases: mk(1) }, outDir: tmpDir() });
   assert.equal(bad.ok, false);
   assert.match(bad.problems.join('\n'), /TC_W_001.*Check label/);
   const c = good('TC_W_001', true);
@@ -130,7 +131,7 @@ test('vòng sửa lỗi báo tiến độ: nêu số lỗi, lần sửa n/maxFix
   const fix = events.find((p) => /sửa lại lần 1\/3/.test(p.label));
   assert.ok(fix, events.map((e) => e.label).join(' | '));
   assert.match(fix.label, /Kiểm tra phát hiện \d+ lỗi/);
-  assert.match(fix.label, /Check label/);
+  assert.match(fix.label, /không hợp lệ/);
 });
 
 test('convertSheet: onSkeleton một lần, onGroup mỗi nhóm viết xong; có sẵn skeleton → không gọi AI lập khung', async () => {
@@ -161,4 +162,60 @@ test('convertSheet chuyển lại một phần: khoá case đã xong, chỉ vi�
   assert.equal(ai.skeleton, 0);
   assert.deepEqual(ai.rowsCalls, [['TC_W_003'], ['TC_W_003']]);
   assert.deepEqual(r.plans.TC_W_002.rows, keep2.rows);
+});
+
+// Lỗi có quy luật được code sửa trước khi ghi (không tốn vòng AI): thiếu Check label, thiếu check dương sau Verify screen, Compare / Platform viết lệch
+test('convertSheet: lỗi có quy luật (thiếu label, thiếu check sau Nav, compare "equal") → code tự sửa, AI chỉ viết 1 lần', async () => {
+  const { autoFixRows } = await import('../server/testcases/convert/writeXlsx.js');
+  const rows = autoFixRows([
+    { step: 1, screen: 'A', kind: 'Action', keyword: 'Tap', target: 'Go', platform: 'ios' },
+    { step: 1, screen: 'B', kind: 'Nav', keyword: 'Verify screen', target: 'Title B' },
+    { step: 1, screen: 'B', kind: 'Check', keyword: 'Verify not displayed', target: 'Error', label: 'Không lỗi' },
+    { step: 2, screen: 'B', kind: 'Action', keyword: 'Tap', target: 'Next' },
+    { step: 2, screen: 'B', kind: 'Check', keyword: 'Verify text', target: 'Hi', value: 'Hi', compare: 'equal' },
+  ]);
+  assert.equal(rows[0].platform, 'iOS');
+  // sau Nav chỉ có "not displayed" → chèn check dương của màn ngay sau Nav, giữ số step
+  assert.deepEqual([rows[2].kind, rows[2].keyword, rows[2].target, rows[2].step], ['Check', 'Verify displayed', 'Title B', 1]);
+  assert.equal(rows[5].compare, 'equals');
+  assert.equal(rows[5].label, 'Verify text "Hi"');
+  // đã có check dương sau Nav → không chèn
+  assert.equal(autoFixRows([{ step: 1, screen: 'B', kind: 'Nav', keyword: 'Verify screen', target: 'T' }, { step: 1, screen: 'B', kind: 'Check', keyword: 'Verify text', target: 'T', value: 'T', label: 'l' }]).length, 2);
+  const cases = mk(2);
+  const ai = fakeAi((id, fresh) => noLabelReal(id, fresh));
+  const r = await convertSheet({ sheet: { sheet: 'Welcome', cases }, decisions: decisions(cases), runClaude: ai, outDir: tmpDir() });
+  assert.equal(r.ok, true, r.problems.join('; '));
+  assert.equal(ai.rowsCalls.length, 1);
+});
+const noLabelReal = (id, fresh) => ({ ...good(id, fresh), rows: good(id, fresh).rows.map((r) => (r.kind === 'Check' ? { ...r, label: undefined } : r)) });
+
+test('chainFreshFixes: lỗi chuỗi tiếp nối → đúng TC cần fresh', async () => {
+  const { chainFreshFixes } = await import('../server/testcases/convert/writeXlsx.js');
+  assert.deepEqual(chainFreshFixes([
+    'TC_TRD_001: có Relaunch app nên phải đứng cuối chuỗi — TC_TRD_002 cần fresh = true, hoặc tách TC_TRD_001 chạy riêng',
+    'TC_X_009: chuỗi tiếp nối quá 8 TC — cắt ở ranh giới nhóm màn, TC này fresh = true',
+    'TC_Y step 1: keyword sai',
+  ]), ['TC_TRD_002', 'TC_X_009']);
+});
+
+test('extractFlows: đoạn đường đi giống nhau ở Step 0 của ≥3 TC → 1 luồng dùng chung, TC gọi Run flow; bước Launch fresh giữ trong TC', async () => {
+  const { extractFlows } = await import('../server/testcases/convert/writeXlsx.js');
+  const path0 = [
+    { step: 0, screen: 'Welcome', kind: 'Action', keyword: 'Launch fresh' },
+    { step: 0, screen: 'Welcome', kind: 'Action', keyword: 'Tap', target: 'Get Started' },
+    { step: 0, screen: 'Age', kind: 'Nav', keyword: 'Verify screen', target: 'How old are you?' },
+    { step: 0, screen: 'Age', kind: 'Check', keyword: 'Verify displayed', target: 'How old are you?', label: 'x' },
+    { step: 0, screen: 'Age', kind: 'Action', keyword: 'Tap', target: '25–34' },
+    { step: 0, screen: 'Goals', kind: 'Nav', keyword: 'Verify screen', target: 'Goals' },
+    { step: 0, screen: 'Goals', kind: 'Check', keyword: 'Verify displayed', target: 'Goals', label: 'y' },
+  ];
+  const tc = (id, extra = []) => ({ id, fresh: true, rows: [...path0.map((r) => ({ ...r, label: r.label ? `${r.label}-${id}` : r.label })), ...extra, { step: 1, screen: 'Goals', kind: 'Check', keyword: 'Verify text', target: id, value: id, label: 'z' }] });
+  const ex = extractFlows({ testcases: [tc('T1'), tc('T2'), tc('T3'), { id: 'T4', fresh: true, rows: [{ step: 1, screen: 'X', kind: 'Check', keyword: 'Verify displayed', target: 'X', label: 'x' }] }] });
+  assert.deepEqual(ex.made.map((m) => m.uses), [3, 3]);
+  const t1 = ex.testcases.find((t) => t.id === 'T1');
+  assert.deepEqual(t1.rows.filter((r) => r.step === 0).map((r) => r.keyword), ['Launch fresh', 'Run flow', 'Run flow']);
+  assert.equal(t1.rows.at(-1).target, 'T1');
+  assert.ok(Object.keys(ex.flows).includes('Welcome → Age'));
+  assert.deepEqual(ex.testcases.find((t) => t.id === 'T4').rows.length, 1); // không đụng TC không chung
+  assert.equal(extractFlows({ testcases: [tc('T1'), tc('T2')] }).made.length, 0); // < 3 TC → không gom
 });

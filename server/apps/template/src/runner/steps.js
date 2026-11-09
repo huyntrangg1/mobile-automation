@@ -258,6 +258,8 @@ const OVERLAY_HINT = /sign ?in to |log ?in to |create (an |your )?account|save y
 // Nút mua / xác nhận thanh toán / đăng nhập bên thứ ba — tool không bao giờ tự bấm (đóng popup, bấm lại, AI chọn, đi theo sơ đồ màn)
 export const HARD_BUY = /\b(subscribe|buy|purchase|start (my |your )?(free )?trial|try (it )?free|get premium|upgrade|pay|confirm purchase|1-tap buy|continue with (apple|google|facebook)|sign in with)\b|[$€£₫¥]\s?\d|\d\s?[$€£₫¥]/i;
 const BUY_WORD = HARD_BUY;
+// Hook setup "đóng màn chặn" có sẵn (không cần viết trong src/hooks.js)
+const DISMISS_HOOK = /^(dismiss|close|skip|exit)_(the_)?(paywall|ad|ads|popup|offer|promo|interstitial|subscription)s?$/i;
 const STALE_RE = /expired from the internal cache|stale element|either not present or it has expired/i;
 const overlayGaveUp = new Set(); // popup AI đã không tìm được nút đóng trong lần chạy này
 // Màn đang tải (không kết luận kẹt sớm khi thấy những dấu hiệu này trong page source)
@@ -291,7 +293,7 @@ export const BUILTIN_HOOKS = {
   },
 };
 // Một thao tác AI hỗ trợ → chữ cho tester đọc
-export const assistLabel = (a) => ({ use: `Dùng "${a.name || a.locator}" thay cho phần tử của script`, arrived: `Đã ở đúng màn (thấy "${a.name || a.locator}")`, tap: `Bấm "${a.name || a.locator}"`, type: `Nhập "${a.text}" vào "${a.name || a.locator}"`, swipe: `Vuốt ${a.text}`, back: 'Back', wait: 'Chờ 4s' }[a.action] || a.action);
+export const assistLabel = (a) => ({ tapPoint: `Chạm "${a.name || ''}" (theo toạ độ ${Math.round(a.x)}%, ${Math.round(a.y)}%)`, use: `Dùng "${a.name || a.locator}" thay cho phần tử của script`, arrived: `Đã ở đúng màn (thấy "${a.name || a.locator}")`, tap: `Bấm "${a.name || a.locator}"`, type: `Nhập "${a.text}" vào "${a.name || a.locator}"`, swipe: `Vuốt ${a.text}`, back: 'Back', wait: 'Chờ 4s' }[a.action] || a.action);
 const firstLine = (e) => String(e?.message || e).split('\n')[0];
 // Lỗi không thấy phần tử để thao tác: dòng đầu nêu target + màn (report đặt bug đúng màn), dòng sau giữ lỗi gốc
 const notFound = (target, screen) => (e) => {
@@ -509,6 +511,38 @@ export function createSteps({ sa, logStep, snapshot, flowBug = () => {}, noteScr
     if (!ok(v) && (v == null || v === false || v === '') && (await closeOverlay())) v = await get();
     return v;
   };
+  // Đóng màn chặn (paywall / quảng cáo / popup) theo yêu cầu của test case: nút đóng rõ ràng (Close, X, Not now…) → bấm; không có nút đó
+  // và bật AI hỗ trợ → AI chỉ nút đóng (kể cả chạm theo toạ độ — nút X vẽ bằng ảnh); không bao giờ bấm mua. Không có màn chặn → coi như đã đóng
+  async function dismissBlocker(step, screen, name) {
+    await dismissUnexpected();
+    for (let i = 0; i < 3; i++) {
+      let xml = '';
+      try { xml = await driver.getPageSource(); } catch {}
+      const els = screenElements(xml, driver.isAndroid);
+      const label = (e) => String(e.name || e.label || '').trim();
+      const closer = els.find((e) => OVERLAY_CLOSE.test(label(e)) && !HARD_BUY.test(label(e)));
+      if (closer) {
+        await ui.tap(closer.locator, 2000);
+        info_(`${name}: bấm "${label(closer)}" để đóng`);
+        await sleep(1200);
+        continue; // có thể còn lớp chặn khác (paywall → ưu đãi giảm giá)
+      }
+      if (!assist || !budget()) break;
+      let a = null;
+      try {
+        const win = await Promise.resolve().then(() => driver.getWindowRect()).then((w) => ({ width: w.width, height: w.height })).catch(() => null);
+        let shot = null;
+        if (env.REPORTS_DIR) { const d = path.join(env.REPORTS_DIR, 'ai-assist'); fs.mkdirSync(d, { recursive: true }); shot = path.join(d, `${Date.now()}.png`); await browser.saveScreenshot(shot).catch(() => { shot = null; }); }
+        const r = await fetch(`${env.QAPD_API}/apps/${encodeURIComponent(env.APP_ID)}/assist`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tc, step, screen, target: '', kind: 'overlay', error: `Test case yêu cầu đóng màn chặn (${name}) — paywall / quảng cáo / popup. Chỉ chỉ ra nút ĐÓNG (X, Close, Not now…), không bao giờ nút mua; không có màn chặn → giveUp`, elements: els, shot, win, tried: [] }), signal: AbortSignal.timeout(aiTimeout) });
+        a = r.ok ? await r.json() : null;
+      } catch {}
+      if (a?.action === 'tap' && a.locator) await ui.tap(a.locator, 2000);
+      else if (a?.action === 'tapPoint') await tapPoint(`point:${Number(a.x) / 100},${Number(a.y) / 100}`);
+      else break;
+      info_(`${name}: AI chỉ nút đóng "${a.name || ''}"${a.reason ? ` — ${a.reason}` : ''}`);
+      await sleep(1200);
+    }
+  }
   // Popup trong app che màn (không phải hộp thoại hệ thống): tìm nút đóng rõ ràng (X / Close / Not now…) khi màn có dấu hiệu popup ngoài
   // luồng; không chắc thì nhờ AI (khi bật AI hỗ trợ) chỉ ra nút đóng — AI chỉ được đóng, không bấm mua / đăng nhập. CLOSE_POPUPS=0 để tắt
   let overlayClosed = 0;
@@ -733,12 +767,19 @@ export function createSteps({ sa, logStep, snapshot, flowBug = () => {}, noteScr
       let shot = null;
       if (dir) { shot = path.join(dir, `${Date.now()}.png`); await browser.saveScreenshot(shot).catch(() => { shot = null; }); }
       let a = null;
+      const win = await Promise.resolve().then(() => driver.getWindowRect()).then((w) => ({ width: w.width, height: w.height })).catch(() => null);
       if (!budget()) { info_('AI hỗ trợ: đã hết lượt gọi AI cho case này (AI_ASSIST_BUDGET) — giữ lỗi của script'); return false; }
       try {
-        const r = await fetch(`${env.QAPD_API}/apps/${encodeURIComponent(env.APP_ID)}/assist`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tc, step: info.step ?? lastStep, screen: info.screen, target: info.target, kind, error, elements, shot, tried }), signal: AbortSignal.timeout(aiTimeout) });
+        const r = await fetch(`${env.QAPD_API}/apps/${encodeURIComponent(env.APP_ID)}/assist`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tc, step: info.step ?? lastStep, screen: info.screen, target: info.target, kind, error, elements, shot, tried, win }), signal: AbortSignal.timeout(aiTimeout) });
         a = r.ok ? await r.json() : null;
       } catch { a = null; }
-      if (!a || ['giveUp', 'refused'].includes(a.action)) {
+      // Câu trả lời bị tool từ chối (phần tử không có, trông như nút mua…) → báo lý do cho AI và cho thử lại (trong giới hạn số lần)
+      if (a?.action === 'refused') {
+        tried.push(`(bị từ chối: ${a.reason})`);
+        info_(`AI hỗ trợ: câu trả lời bị từ chối — ${a.reason} — hỏi lại`);
+        continue;
+      }
+      if (!a || a.action === 'giveUp') {
         if (a?.action === 'giveUp' && !done.length) assistGaveUp.set(memo, { tc, reason: String(a.reason || '').slice(0, 160) });
         info_(`AI hỗ trợ: dừng — ${a?.reason || 'không gọi được AI'}`);
         return false;
@@ -758,6 +799,7 @@ export function createSteps({ sa, logStep, snapshot, flowBug = () => {}, noteScr
           return record('arrived');
         }
         if (a.action === 'tap') await ui.tap(a.locator, 3000);
+        else if (a.action === 'tapPoint') await tapPoint(`point:${Number(a.x) / 100},${Number(a.y) / 100}`);
         else if (a.action === 'type') await ui.typeInto(a.locator, a.text);
         else if (a.action === 'back') await (driver.isAndroid ? driver.back() : ui.tap(BACK_BUTTON, 3000));
         else if (a.action === 'swipe') await swipeDir(a.text);
@@ -1310,7 +1352,14 @@ export function createSteps({ sa, logStep, snapshot, flowBug = () => {}, noteScr
     vars,
     // Run setup: hook dự án (src/hooks.js → setup[name]) — seed data, giả lập lỗi, đặt ngày…
     async runSetup(step, screen, name) {
-      const fn = (await loadHooks()).setup?.[name] || BUILTIN_HOOKS.setup[String(name).toLowerCase()];
+      const own = (await loadHooks()).setup?.[name];
+      // Hook có sẵn: đóng paywall / quảng cáo / popup (dismiss_paywall, close_paywall, skip_paywall, close_ad, dismiss_popup…) — app nào cũng cần
+      if (typeof own !== 'function' && DISMISS_HOOK.test(String(name))) {
+        await dismissBlocker(step, screen, name);
+        act(step, screen, 'Run setup', '', name);
+        return;
+      }
+      const fn = own || BUILTIN_HOOKS.setup[String(name).toLowerCase()];
       if (typeof fn !== 'function') throw new Error(`Chưa khai báo hook setup "${name}" trong src/hooks.js`);
       await fn({ driver, vars, env });
       act(step, screen, 'Run setup', '', name);

@@ -261,7 +261,8 @@ export function createConverter({ store, map, emit, generator, importer = import
   // và xoá case không còn trong file mới). Đã có file của chính import này cho sheet → dùng lại; ngược lại tên mới chưa có trong store
   function outStemFor(mi, sheet, entries) {
     const owned = entries.map((c) => c.outFile).find(Boolean);
-    if (owned) return { out: owned, into: owned };
+    // File của import này còn trong app → cập nhật; đã bị xoá (vd tester xoá file automation để làm lại) → tạo lại đúng tên đó
+    if (owned) return { out: owned, into: store.list('cases').some((c) => c.appId === mi.appId && c.file === owned) ? owned : '*new' };
     const slug = safe(sheet).replace(/^-+|-+$/g, '');
     const part = slug && slug === sheet ? slug : `${slug || 'sheet'}-${sha(sheet).slice(0, 6)}`;
     const base = fileStem(`${mi.stem}-${part}-automation.xlsx`);

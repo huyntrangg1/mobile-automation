@@ -239,3 +239,26 @@ test('POST apply khi run đang chạy → 409', async () => {
   assert.equal(a.status, 409);
   assert.equal(s.imports(), 0);
 });
+
+// RUN-0167: AI chọn đúng nút "Continue" nhưng ghi tên thay vì locator "~Continue" → bị từ chối và dừng. Giờ: khớp theo tên; chạm theo toạ độ có kiểm nút mua
+test('vetAction: AI ghi tên nút ("Continue") thay vì locator → khớp phần tử, trả locator chuẩn; tên không có → từ chối kèm gợi ý tapPoint', async () => {
+  const { vetAction } = await import('../server/ai/assist.js');
+  const els = [{ type: 'Button', name: 'Continue', locator: '~Continue' }, { type: 'StaticText', name: 'Research shows HRV', locator: '~Research shows HRV' }];
+  const v = vetAction({ action: 'tap', locator: 'Continue', reason: 'màn trung gian' }, els);
+  assert.equal(v.ok, true);
+  assert.equal(v.step.locator, '~Continue');
+  const no = vetAction({ action: 'tap', locator: 'Next', reason: '' }, els);
+  assert.equal(no.ok, false);
+  assert.match(no.why, /tapPoint/);
+});
+
+test('vetAction tapPoint: điểm chạm rơi vào nút mua → chặn; điểm thường → được; ngoài 0–100 → từ chối', async () => {
+  const { vetAction } = await import('../server/ai/assist.js');
+  const els = [{ type: 'Button', name: 'Start free trial', locator: '~Start free trial', rect: [20, 700, 360, 60] }];
+  const win = { width: 400, height: 800 };
+  assert.equal(vetAction({ action: 'tapPoint', x: 50, y: 91, reason: '' }, els, win).ok, false);
+  const ok = vetAction({ action: 'tapPoint', x: 50, y: 30, text: 'Continue', reason: 'nút vẽ bằng ảnh' }, els, win);
+  assert.equal(ok.ok, true);
+  assert.equal(ok.step.name, 'Continue');
+  assert.equal(vetAction({ action: 'tapPoint', x: 150, y: 30, reason: '' }, els, win).ok, false);
+});

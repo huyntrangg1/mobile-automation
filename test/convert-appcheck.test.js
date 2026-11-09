@@ -84,7 +84,7 @@ test('convertSheet + app: dòng của case vẫn dùng target không có thật 
   };
   const r = await convertSheet({ sheet: { sheet: 'W', cases: [mc('TC_1')] }, decisions: [{ id: 'TC_1', mode: 'automate' }], runClaude, outDir: tmpDir(), appCtx: ctx });
   assert.equal(r.ok, true, JSON.stringify(r.problems));
-  assert.equal(rowsCalls, 3); // lần đầu + 2 lần sửa theo app
+  assert.equal(rowsCalls, 2); // lần đầu + 1 lần sửa theo app (cảnh báo chỉ 1 vòng AI — QAPD_WARN_FIX_ROUNDS)
   assert.ok(r.review.some((x) => /\[App\] TC_1 step 1: "Goal thứ 1" không có trong locator map/.test(x)));
 });
 
@@ -93,4 +93,17 @@ test('checkApp: đã bấm một nút đi tiếp khác (vd "Continue") thì khô
   const r = (t) => checkApp({ owner: 'F', ctx: c, rows: [{ step: 1, screen: 'Free vs Plus', kind: 'Action', keyword: 'Tap', target: t }, { step: 2, screen: 'Paywall', kind: 'Nav', keyword: 'Verify screen', target: 'Paywall' }] });
   assert.deepEqual(r('Continue'), []);
   assert.deepEqual(r('Skip'), []);
+});
+
+test('convertSheet + app: phần tử không có trong locator map và không có tên gần giống (màn chưa lấy locator) → chỉ cảnh báo, không bắt AI viết lại', async () => {
+  let rowsCalls = 0;
+  const runClaude = async (req) => {
+    if (req.schema.properties.order) return { ok: true, data: { order: [{ id: 'TC_1', fresh: true }], groups: [['TC_1']], flows: {} } };
+    rowsCalls++;
+    return { ok: true, data: { testcases: [tcRows('TC_1', 'Zzqx hoàn toàn khác')] } };
+  };
+  const r = await convertSheet({ sheet: { sheet: 'W', cases: [{ ...mc('TC_1'), expected: '1. Hiển thị "Continue"' }] }, decisions: [{ id: 'TC_1', mode: 'automate' }], runClaude, outDir: tmpDir(), appCtx: ctx });
+  assert.equal(r.ok, true, JSON.stringify(r.problems));
+  assert.equal(rowsCalls, 1);
+  assert.ok(r.review.some((x) => /\[App\] TC_1 step 1: "Zzqx hoàn toàn khác" không có trong locator map/.test(x)), r.review.join('|'));
 });

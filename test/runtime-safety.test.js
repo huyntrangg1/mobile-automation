@@ -124,3 +124,16 @@ test('hộp xin quyền bật lên ở bước khác → vẫn tự đóng, kể
   await k.waitDisplayed(2, 'Health', 'Allow', undefined, 2);
   assert.deepEqual(accepted, []);
 });
+
+test('hook có sẵn dismiss_paywall: bấm nút đóng (Close), không bấm nút mua; không có màn chặn → đi tiếp, không lỗi', async () => {
+  const present = new Set(['~Close', '~Start free trial']);
+  let shown = true;
+  const { taps } = device(present, { source: () => (shown ? '<XCUIElementTypeButton name="Start free trial" visible="true"/><XCUIElementTypeButton name="Close" visible="true"/>' : '<x/>') });
+  globalThis.$ = (sel) => ({ waitForExist: async () => { if (!present.has(sel)) throw new Error('still not existing'); }, click: async () => { taps.push(sel); if (sel === '~Close') shown = false; } });
+  const notes = [];
+  const k = steps({}, { logStep: (s) => notes.push(s) });
+  await k.runSetup(1, 'Paywall', 'dismiss_paywall');
+  assert.deepEqual(taps, ['~Close']);
+  assert.ok(notes.some((n) => n.keyword === 'Run setup' && n.value === 'dismiss_paywall'));
+  await k.runSetup(2, 'Home', 'close_ad'); // không còn màn chặn → không lỗi
+});

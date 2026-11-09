@@ -12,6 +12,8 @@ const text = (v) => (v == null ? '' : v.richText ? v.richText.map((t) => t.text)
 const COLS = ['Step', 'Screen', 'Kind', 'Keyword', 'Target', 'Value'];
 const ROW_OF = {
   tap: (a) => ({ keyword: 'Tap', target: a.name || a.locator, value: '' }),
+  // Chạm theo toạ độ (nút không có tên trong cây phần tử): ghi thành Tap theo tên AI thấy trên màn — cần lấy locator cho nút đó
+  tapPoint: (a) => ({ keyword: 'Tap', target: a.name || `point:${Number(a.x) / 100},${Number(a.y) / 100}`, value: '' }),
   type: (a) => ({ keyword: 'Enter', target: a.name || a.locator, value: a.text || '' }),
   swipe: (a) => ({ keyword: 'Swipe', target: '', value: a.text || 'up' }),
   back: () => ({ keyword: 'Back', target: '', value: '' }),

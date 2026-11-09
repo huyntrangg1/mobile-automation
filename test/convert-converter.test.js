@@ -153,7 +153,7 @@ test('một sheet lỗi (AI luôn sai) → các case sheet đó state error kèm
   await e.conv.convert(mi.id);
   const done = e.conv.get(mi.id);
   assert.equal(modeOf(done, 'TC_W_001', 'Sex').state, 'error');
-  assert.match(modeOf(done, 'TC_W_001', 'Sex').error, /label/i);
+  assert.match(modeOf(done, 'TC_W_001', 'Sex').error, /keyword/i);
   assert.equal(modeOf(done, 'TC_W_002', 'Age').state, 'converted');
 });
 

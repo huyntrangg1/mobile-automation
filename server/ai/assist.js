@@ -7,10 +7,10 @@ import { runClaude as defaultRunClaude } from './claude.js';
 import { BUY, looksLikePaywall, isCloseName } from '../locators/overlay.js';
 
 const PROMPT = fs.readFileSync(fileURLToPath(new URL('./prompts/run-assist.md', import.meta.url)), 'utf8');
-export const ACTIONS = ['use', 'arrived', 'tap', 'type', 'swipe', 'back', 'wait', 'giveUp'];
+export const ACTIONS = ['use', 'arrived', 'tap', 'tapPoint', 'type', 'swipe', 'back', 'wait', 'giveUp'];
 const SCHEMA = {
   type: 'object',
-  properties: { action: { type: 'string', enum: ACTIONS }, locator: { type: 'string' }, text: { type: 'string' }, reason: { type: 'string' } },
+  properties: { action: { type: 'string', enum: ACTIONS }, locator: { type: 'string' }, text: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, reason: { type: 'string' } },
   required: ['action', 'reason'],
 };
 const MODEL = process.env.QAPD_ASSIST_MODEL || process.env.QAPD_EXPLORE_MODEL || 'claude-sonnet-5-5';
@@ -40,13 +40,43 @@ export function goalText({ kind, screen, target, error }) {
 }
 
 // Kiểm câu trả lời của AI: locator phải có trong danh sách; không bao giờ là nút mua → { ok, step } | { ok:false, why }
-export function vetAction(a, elements = []) {
+// Phần tử AI chỉ ra: đúng locator, hoặc AI ghi tên / nhãn nút ("Continue" thay vì "~Continue") → phần tử có đúng tên đó (duy nhất)
+export function findElement(elements, ref) {
+  const want = String(ref || '').trim();
+  if (!want) return null;
+  const exact = elements.find((e) => e.locator === want);
+  if (exact) return exact;
+  const bare = want.replace(/^~/, '').trim().toLowerCase();
+  const byName = elements.filter((e) => [e.name, e.label].some((n) => String(n || '').trim().toLowerCase() === bare));
+  if (!byName.length) return null;
+  // nhiều phần tử cùng tên → ưu tiên Button
+  return byName.find((e) => /button/i.test(e.type || '')) || byName[0];
+}
+// win: { width, height } (điểm) — để biết điểm chạm theo % rơi vào phần tử nào
+export function vetAction(a, elements = [], win = null) {
   if (!a || !ACTIONS.includes(a.action)) return { ok: false, why: 'AI không trả thao tác hợp lệ' };
   if (a.action === 'giveUp') return { ok: true, step: { action: 'giveUp', reason: a.reason || '' } };
+  const paywall = looksLikePaywall(elements);
+  if (a.action === 'tapPoint') {
+    const x = Number(a.x);
+    const y = Number(a.y);
+    if (!(x >= 0 && x <= 100 && y >= 0 && y <= 100)) return { ok: false, why: 'Toạ độ chạm phải là % (0–100) của màn' };
+    // Mọi phần tử chứa điểm chạm (không chỉ phần tử nhỏ nhất) — rơi vào nút mua → chặn; không biết kích thước màn mà đang ở paywall → chặn
+    if (!win?.width) { if (paywall) return { ok: false, why: 'Không biết kích thước màn trên paywall — không chạm theo toạ độ' }; }
+    else {
+      const px = (x / 100) * win.width;
+      const py = (y / 100) * win.height;
+      const hit = elements.filter((e) => Array.isArray(e.rect) && px >= e.rect[0] && px <= e.rect[0] + e.rect[2] && py >= e.rect[1] && py <= e.rect[1] + e.rect[3]);
+      const buy = hit.find((e) => !isCloseName(nameOf(e)) && (HARD_BUY.test(nameOf(e)) || (paywall && BUY.test(nameOf(e)))));
+      if (buy) return { ok: false, why: `Chặn: điểm chạm rơi vào "${nameOf(buy)}" (trông như nút mua)` };
+    }
+    return { ok: true, step: { action: 'tapPoint', x, y, locator: '', name: a.text || `điểm ${Math.round(x)}%, ${Math.round(y)}%`, text: '', reason: a.reason || '' } };
+  }
   let el = null;
   if (NEEDS_LOCATOR.has(a.action)) {
-    el = elements.find((e) => e.locator === a.locator);
-    if (!el) return { ok: false, why: `AI chọn phần tử không có trên màn (${a.locator || 'trống'})` };
+    el = findElement(elements, a.locator);
+    if (!el) return { ok: false, why: `AI chọn phần tử không có trên màn (${a.locator || 'trống'}) — chọn đúng locator trong danh sách, hoặc dùng tapPoint theo toạ độ trên ảnh nếu nút không có trong danh sách` };
+    a = { ...a, locator: el.locator };
     const n = nameOf(el);
     const paywall = looksLikePaywall(elements);
     if (a.action !== 'arrived' && !isCloseName(n) && (HARD_BUY.test(n) || (paywall && BUY.test(n)))) return { ok: false, why: `Chặn: "${n}" trông như nút mua` };
@@ -71,7 +101,7 @@ export function createAssist({ store, runClaude = defaultRunClaude, model = MODE
     });
     const r = await runClaude({ prompt, schema: SCHEMA, allowedTools: ['Read'], lean: true, noPersist: true, timeoutMs: 90000, model });
     if (!r.ok) return { action: 'giveUp', reason: `AI không trả lời được: ${String(r.error || '').slice(0, 120)}` };
-    const v = vetAction(r.data, elements);
+    const v = vetAction(r.data, elements, body.win || null);
     return v.ok ? v.step : { action: 'refused', reason: v.why };
   };
 }

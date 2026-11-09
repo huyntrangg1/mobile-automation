@@ -466,3 +466,17 @@ test('bước kiểm "không hiển thị" sai thì KHÔNG đóng popup (tránh 
   await k.notShown(1, 'Home', 'Paywall', 'Không hiện paywall', 'sel-pay');
   assert.deepEqual(dev.taps, []);
 });
+
+test('AI hỗ trợ: câu trả lời bị từ chối → hỏi lại (không dừng ngay); lần sau dùng được → đi tiếp', async () => {
+  const dir = tmpDir();
+  const dev = device(new Set(['~Skip']));
+  globalThis.driver.getWindowRect = async () => ({ x: 0, y: 0, width: 400, height: 800 });
+  let n = 0;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => { n++; if (n === 2) dev.present.add('sel-go'); return { ok: true, json: async () => (n === 1 ? { action: 'refused', reason: 'phần tử không có' } : { action: 'tap', locator: '~Skip', name: 'Skip', reason: 'màn trung gian' }) }; };
+  const env = { AI_ASSIST: '1', QAPD_API: 'http://x/api', APP_ID: 'app1', REPORTS_DIR: dir, AUTO_RESOLVE: '0', EARLY_STUCK: '0' };
+  const k = createSteps({ sa: { eq() {} }, logStep() {}, snapshot: async () => ({ k: null }), env, cwd: dir, tc: 'TC_R2' });
+  try { await k.tap(1, 'S', 'Go', 'sel-go'); } finally { globalThis.fetch = realFetch; }
+  assert.equal(n, 2);
+  assert.deepEqual(dev.taps, ['~Skip', 'sel-go']);
+});

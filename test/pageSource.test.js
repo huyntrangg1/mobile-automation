@@ -61,3 +61,13 @@ test('giữ phần tử Other có nhãn accessibility (vd progress bar "Onboardi
   const els = parseElements(xml);
   assert.deepEqual(els.map((e) => [e.type, e.name, e.value, e.locator]), [['Other', 'Onboarding progress', '0%', '~Onboarding progress'], ['ProgressIndicator', 'Loading', '50%', '~Loading']]);
 });
+
+// moss: các màn onboarding cùng bố cục (Back + một câu dài + Continue) bị gộp làm một vì câu > 60 ký tự bị bỏ qua khi so màn
+test('sameScreen: màn hướng dẫn cùng bố cục nhưng khác câu (dài) → khác màn; chữ dữ liệu (số, tên) vẫn không tách màn', async () => {
+  const { sameScreen } = await import('../server/locators/pageSource.js');
+  const page = (title) => [{ type: 'Button', name: 'Back' }, { type: 'StaticText', name: title }, { type: 'Button', name: 'Continue' }];
+  assert.equal(sameScreen(page('Your body sends signals every day. Understanding them can make a real difference'), page('This is HRV, which is a key indicator of your stress and overall well-being.')), false);
+  assert.equal(sameScreen(page('This is HRV, which is a key indicator of your stress and overall well-being.'), page('This is HRV, which is a key indicator of your stress and overall well-being.')), true);
+  const home = (n) => [{ type: 'StaticText', name: `Hi, ${n}` }, { type: 'StaticText', name: 'Your score today 82' }, { type: 'Button', name: 'Home' }, { type: 'Button', name: 'Log' }, { type: 'Button', name: 'Settings' }];
+  assert.equal(sameScreen(home('Anna'), home('Ben')), true);
+});
